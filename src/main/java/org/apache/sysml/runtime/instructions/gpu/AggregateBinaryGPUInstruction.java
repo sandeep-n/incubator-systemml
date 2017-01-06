@@ -54,13 +54,6 @@ public class AggregateBinaryGPUInstruction extends GPUInstruction
 		_isRightTransposed = rightTranspose;
 	}
 
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
 	public static AggregateBinaryGPUInstruction parseInstruction( String str ) 
 		throws DMLRuntimeException 
 	{
@@ -84,33 +77,8 @@ public class AggregateBinaryGPUInstruction extends GPUInstruction
 	
 	@Override
 	public void processInstruction(ExecutionContext ec) 
-		throws DMLRuntimeException
-	{	
-		// --------------------------------------
-		// This code will be removed when the JIRA SYSTEMML-702 is complete
-		// FIXME this code does not adhere to compiler memory budgets
-		if(	isSparse(ec, _input1.getName()) || isSparse(ec, _input2.getName())) {
-			//get inputs
-			MatrixBlock matBlock1 = ec.getMatrixInput(_input1.getName());
-	        MatrixBlock matBlock2 = ec.getMatrixInput(_input2.getName());
-	        
-	        if(_isLeftTransposed) 
-	        	matBlock1 = transpose(matBlock1);
-	        if(_isRightTransposed) 
-	        	matBlock2 = transpose(matBlock2);
-			
-	        //compute matrix multiplication
-	        AggregateBinaryOperator ab_op = (AggregateBinaryOperator) _optr;
-			MatrixBlock soresBlock = (MatrixBlock) (matBlock1.aggregateBinaryOperations(matBlock1, matBlock2, new MatrixBlock(), ab_op));
-				
-			//release inputs/outputs
-			ec.releaseMatrixInput(_input1.getName());
-			ec.releaseMatrixInput(_input2.getName());
-			ec.setMatrixOutput(_output.getName(), soresBlock);
-			return;
-		}
-		// --------------------------------------
-		
+		throws DMLRuntimeException 
+	{
 		Statistics.incrementNoOfExecutedGPUInst();
 		
 		AggregateBinaryOperator op = (AggregateBinaryOperator) _optr;
@@ -120,40 +88,28 @@ public class AggregateBinaryGPUInstruction extends GPUInstruction
 		
 		//get inputs
 		MatrixObject m1 = ec.getMatrixInputForGPUInstruction(_input1.getName());
-        MatrixObject m2 = ec.getMatrixInputForGPUInstruction(_input2.getName());
-        
-        //compute matrix multiplication
-        int rlen = (int) (_isLeftTransposed ? m1.getNumColumns() : m1.getNumRows());
-        int clen = (int) (_isRightTransposed ? m2.getNumRows() : m2.getNumColumns());
-        
-        ec.setMetaData(_output.getName(), rlen, clen);
-        MatrixObject out = ec.getMatrixOutputForGPUInstruction(_output.getName(), false);
-        LibMatrixCUDA.matmult(m1, m2, out, _isLeftTransposed, _isRightTransposed);
+		MatrixObject m2 = ec.getMatrixInputForGPUInstruction(_input2.getName());
+
+		//compute matrix multiplication
+		int rlen = (int) (_isLeftTransposed ? m1.getNumColumns() : m1.getNumRows());
+		int clen = (int) (_isRightTransposed ? m2.getNumRows() : m2.getNumColumns());
+
+		ec.setMetaData(_output.getName(), rlen, clen);
+		LibMatrixCUDA.matmult(ec, m1, m2, _output.getName(), _isLeftTransposed, _isRightTransposed);
         
 		//release inputs/outputs
 		ec.releaseMatrixInputForGPUInstruction(_input1.getName());
 		ec.releaseMatrixInputForGPUInstruction(_input2.getName());
 		ec.releaseMatrixOutputForGPUInstruction(_output.getName());
 	}
-	
-	/**
-	 * 
-	 * @param m1
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
+	@SuppressWarnings("unused")
 	private MatrixBlock transpose(MatrixBlock m1) throws DMLRuntimeException {
 		ReorgOperator r_op = new ReorgOperator(SwapIndex.getSwapIndexFnObject(), 1);
 		return (MatrixBlock) (m1.reorgOperations(r_op, new MatrixBlock(), 0, 0, 0));
 	}
-	
-	/**
-	 * 
-	 * @param ec
-	 * @param var
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
+	@SuppressWarnings("unused")
 	private boolean isSparse(ExecutionContext ec, String var) throws DMLRuntimeException {
 		MatrixObject mo = ec.getMatrixObject(var);
 		return LibMatrixCUDA.isInSparseFormat(mo);

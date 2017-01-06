@@ -26,6 +26,7 @@ import java.util.Set;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.jmlc.JMLCUtils;
+import org.apache.sysml.api.mlcontext.MLContext.ExplainLevel;
 import org.apache.sysml.api.monitoring.SparkMonitoringUtil;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
@@ -48,6 +49,7 @@ import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContextFactory;
 import org.apache.sysml.utils.Explain;
 import org.apache.sysml.utils.Explain.ExplainCounts;
+import org.apache.sysml.utils.Explain.ExplainType;
 import org.apache.sysml.utils.Statistics;
 
 /**
@@ -112,8 +114,11 @@ public class ScriptExecutor {
 	protected Program runtimeProgram;
 	protected ExecutionContext executionContext;
 	protected Script script;
+	protected boolean init = false;
 	protected boolean explain = false;
 	protected boolean statistics = false;
+	protected ExplainLevel explainLevel;
+	protected int statisticsMaxHeavyHitters = 10;
 
 	/**
 	 * ScriptExecutor constructor.
@@ -195,17 +200,16 @@ public class ScriptExecutor {
 	 * Output a description of the program to standard output.
 	 */
 	protected void showExplanation() {
-		if (explain) {
-			try {
-				System.out.println(Explain.explain(dmlProgram));
-			} catch (HopsException e) {
-				throw new MLContextException("Exception occurred while explaining dml program", e);
-			} catch (DMLRuntimeException e) {
-				throw new MLContextException("Exception occurred while explaining dml program", e);
-			} catch (LanguageException e) {
-				throw new MLContextException("Exception occurred while explaining dml program", e);
-			}
-		}
+		if( !explain ) return;
+			
+		try {
+			ExplainType explainType = (explainLevel != null) ? 
+					explainLevel.getExplainType() : ExplainType.RUNTIME;
+			System.out.println(Explain.explain(dmlProgram, runtimeProgram, explainType));
+		} 
+		catch (Exception e) {
+			throw new MLContextException("Exception occurred while explaining dml program", e);
+		} 
 	}
 
 	/**
@@ -276,10 +280,10 @@ public class ScriptExecutor {
 	 * <li>{@link #validateScript()}</li>
 	 * <li>{@link #constructHops()}</li>
 	 * <li>{@link #rewriteHops()}</li>
-	 * <li>{@link #showExplanation()}</li>
 	 * <li>{@link #rewritePersistentReadsAndWrites()}</li>
 	 * <li>{@link #constructLops()}</li>
 	 * <li>{@link #generateRuntimeProgram()}</li>
+	 * <li>{@link #showExplanation()}</li>
 	 * <li>{@link #globalDataFlowOptimization()}</li>
 	 * <li>{@link #countCompiledMRJobsAndSparkInstructions()}</li>
 	 * <li>{@link #initializeCachingAndScratchSpace()}</li>
@@ -291,12 +295,15 @@ public class ScriptExecutor {
 	 * 
 	 * @param script
 	 *            the DML or PYDML script to execute
+	 * @return the results as a MLResults object
 	 */
 	public MLResults execute(Script script) {
 		this.script = script;
 		checkScriptHasTypeAndString();
 		script.setScriptExecutor(this);
 		setScriptStringInSparkMonitor();
+		// Set global variable indicating the script type
+		DMLScript.SCRIPT_TYPE = script.getScriptType();
 
 		// main steps in script execution
 		parseScript();
@@ -304,10 +311,10 @@ public class ScriptExecutor {
 		validateScript();
 		constructHops();
 		rewriteHops();
-		showExplanation();
 		rewritePersistentReadsAndWrites();
 		constructLops();
 		generateRuntimeProgram();
+		showExplanation();
 		globalDataFlowOptimization();
 		countCompiledMRJobsAndSparkInstructions();
 		initializeCachingAndScratchSpace();
@@ -322,7 +329,7 @@ public class ScriptExecutor {
 		script.setResults(mlResults);
 
 		if (statistics) {
-			System.out.println(Statistics.display());
+			System.out.println(Statistics.display(statisticsMaxHeavyHitters));
 		}
 
 		return mlResults;
@@ -340,14 +347,14 @@ public class ScriptExecutor {
 	 */
 	protected void restoreInputsInSymbolTable() {
 		Map<String, Object> inputs = script.getInputs();
-		Map<String, MatrixMetadata> inputMatrixMetadata = script.getInputMatrixMetadata();
+		Map<String, Metadata> inputMetadata = script.getInputMetadata();
 		LocalVariableMap symbolTable = script.getSymbolTable();
 		Set<String> inputVariables = script.getInputVariables();
 		for (String inputVariable : inputVariables) {
 			if (symbolTable.get(inputVariable) == null) {
 				// retrieve optional metadata if it exists
-				MatrixMetadata mm = inputMatrixMetadata.get(inputVariable);
-				script.in(inputVariable, inputs.get(inputVariable), mm);
+				Metadata m = inputMetadata.get(inputVariable);
+				script.in(inputVariable, inputs.get(inputVariable), m);
 			}
 		}
 	}
@@ -388,6 +395,8 @@ public class ScriptExecutor {
 	 * initialize caching, and reset statistics.
 	 */
 	protected void initializeCachingAndScratchSpace() {
+		if( !init ) return;
+		
 		try {
 			DMLScript.initHadoopExecution(config);
 		} catch (ParseException e) {
@@ -443,9 +452,9 @@ public class ScriptExecutor {
 		if (symbolTable != null) {
 			String[] inputs = (script.getInputVariables() == null) ? new String[0] : script.getInputVariables()
 					.toArray(new String[0]);
-			String[] outputs = (script.getOutputVariables() == null) ? new String[0] : script.getOutputVariables()
-					.toArray(new String[0]);
-			RewriteRemovePersistentReadWrite rewrite = new RewriteRemovePersistentReadWrite(inputs, outputs);
+			String[] outputs = (script.getOutputVariables() == null) ? new String[0]
+					: script.getOutputVariables().toArray(new String[0]);
+			RewriteRemovePersistentReadWrite rewrite = new RewriteRemovePersistentReadWrite(inputs, outputs, script.getSymbolTable());
 			ProgramRewriter programRewriter = new ProgramRewriter(rewrite);
 			try {
 				programRewriter.rewriteProgramHopDAGs(dmlProgram);
@@ -619,6 +628,38 @@ public class ScriptExecutor {
 	 */
 	public void setStatistics(boolean statistics) {
 		this.statistics = statistics;
+	}
+
+	public void setStatisticsMaxHeavyHitters(int maxHeavyHitters) {
+		this.statisticsMaxHeavyHitters = maxHeavyHitters;
+	}
+
+	/**
+	 * Whether or not to initialize the scratch_space, bufferpool, etc. Note that any 
+	 * redundant initialize (e.g., multiple scripts from one MLContext) clears existing 
+	 * files from the scratch space and buffer pool.
+	 *  
+	 * @param init {@code true} if should initialize, {@code false} otherwise
+	 */
+	public void setInit(boolean init) {
+		this.init = init;
+	}
+
+	/**
+	 * Set the level of program explanation that should be displayed if explain
+	 * is set to true.
+	 * 
+	 * @param explainLevel
+	 *            the level of program explanation
+	 */
+	public void setExplainLevel(ExplainLevel explainLevel) {
+		this.explainLevel = explainLevel;
+		if (explainLevel == null) {
+			DMLScript.EXPLAIN = ExplainType.NONE;
+		} else {
+			ExplainType explainType = explainLevel.getExplainType();
+			DMLScript.EXPLAIN = explainType;
+		}
 	}
 
 }

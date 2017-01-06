@@ -44,6 +44,7 @@ import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
 import org.apache.sysml.runtime.matrix.MetaData;
 import org.apache.sysml.runtime.matrix.data.FileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
+import org.apache.sysml.runtime.matrix.data.NumItemsByEachReducerMetaData;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.util.LocalFileUtils;
 import org.apache.sysml.runtime.util.MapReduceTool;
@@ -184,8 +185,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	/**
 	 * Basic constructor for any cacheable data.
 	 * 
-	 * @param dt
-	 * @param vt
+	 * @param dt data type
+	 * @param vt value type
 	 */
 	protected CacheableData(DataType dt, ValueType vt) {
 		super (dt, vt);		
@@ -197,7 +198,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	/**
 	 * Copy constructor for cacheable data (of same type).
 	 * 
-	 * @param that
+	 * @param that cacheable data object
 	 */
 	protected CacheableData(CacheableData<T> that) {
 		this( that.getDataType(), that.getValueType() );
@@ -213,7 +214,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * Enables or disables the cleanup of the associated 
 	 * data object on clearData().
 	 * 
-	 * @param flag
+	 * @param flag true if cleanup
 	 */
 	public void enableCleanup(boolean flag) {
 		_cleanupFlag = flag;
@@ -223,56 +224,32 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * Indicates if cleanup of the associated data object 
 	 * is enabled on clearData().
 	 * 
-	 * @return
+	 * @return true if cleanup enabled
 	 */
 	public boolean isCleanupEnabled() {
 		return _cleanupFlag;
 	}
-	
-	/**
-	 * 
-	 * @param s
-	 */
+
 	public void setVarName(String s) {
 		_varName = s;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public String getVarName() {
 		return _varName;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public boolean isHDFSFileExists() {
 		return _hdfsFileExists;
 	}
-	
-	/**
-	 * 
-	 * @param flag
-	 */
+
 	public void setHDFSFileExists( boolean flag )  {
 		_hdfsFileExists = flag;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public String getFileName() {
 		return _hdfsFileName;
 	}
 
-	/**
-	 * 
-	 * @param file
-	 */
 	public synchronized void setFileName( String file ) {
 		if( _hdfsFileName!=null && !_hdfsFileName.equals(file) )
 			if( !isEmpty(true) )
@@ -284,31 +261,21 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * <code>true</code> if the in-memory or evicted matrix may be different from
 	 * the matrix located at {@link #_hdfsFileName}; <code>false</code> if the two
 	 * matrices are supposed to be the same.
+	 * 
+	 * @return true if dirty
 	 */
 	public boolean isDirty() {
 		return _dirtyFlag;
 	}
-	
-	/**
-	 * 
-	 * @param flag
-	 */
+
 	public void setDirty(boolean flag) {
 		_dirtyFlag = flag;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public FileFormatProperties getFileFormatProperties() {
 		return _formatProps;
 	}
-	
-	/**
-	 * 
-	 * @param props
-	 */
+
 	public void setFileFormatProperties(FileFormatProperties props) {
 		_formatProps = props;
 	}
@@ -332,25 +299,14 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		MatrixDimensionsMetaData meta = (MatrixDimensionsMetaData) _metaData;
 		return meta.getMatrixCharacteristics();
 	}
-	
-	/**
-	 * 
-	 */
+
 	public abstract void refreshMetaData() 
 		throws CacheException;
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public RDDObject getRDDHandle() {
 		return _rddHandle;
 	}
-	
-	/**
-	 * 
-	 * @param rdd
-	 */
+
 	public void setRDDHandle( RDDObject rdd ) {
 		//cleanup potential old back reference
 		if( _rddHandle != null )
@@ -365,11 +321,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	public BroadcastObject<T> getBroadcastHandle() {
 		return _bcHandle;
 	}
-	
-	/**
-	 * 
-	 * @param bc
-	 */
+
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public void setBroadcastHandle( BroadcastObject bc ) {
 		//cleanup potential old back reference
@@ -381,11 +333,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		if( _bcHandle != null )
 			bc.setBackReference(this);
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public GPUObject getGPUObject() {
 		return _gpuHandle;
 	}
@@ -412,8 +360,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * In-Status:  EMPTY, EVICTABLE, EVICTED, READ;
 	 * Out-Status: READ(+1).
 	 * 
-	 * @return 
-	 * @throws CacheException 
+	 * @return cacheable data
+	 * @throws CacheException if CacheException occurs
 	 */
 	public synchronized T acquireRead()
 		throws CacheException
@@ -503,8 +451,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * In-Status:  EMPTY, EVICTABLE, EVICTED;
 	 * Out-Status: MODIFY.
 	 * 
-	 * @return 
-	 * @throws CacheException 
+	 * @return cacheable data
+	 * @throws CacheException if CacheException occurs
 	 */
 	public synchronized T acquireModify() 
 		throws CacheException
@@ -560,9 +508,9 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * In-Status:  EMPTY, EVICTABLE, EVICTED;
 	 * Out-Status: MODIFY.
 	 * 
-	 * @param newData 
-	 * @return 
-	 * @throws CacheException 
+	 * @param newData new data
+	 * @return cacheable data
+	 * @throws CacheException if CacheException occurs
 	 */
 	public synchronized T acquireModify(T newData)
 		throws CacheException
@@ -607,7 +555,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * In-Status:  READ, MODIFY;
 	 * Out-Status: READ(-1), EVICTABLE, EMPTY.
 	 * 
-	 * @throws CacheException
+	 * @throws CacheException if CacheException occurs
 	 */
 	public synchronized void release() 
 		throws CacheException
@@ -675,7 +623,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * 
 	 * In-Status:  EMPTY, EVICTABLE, EVICTED;
 	 * Out-Status: EMPTY.
-	 * @throws CacheException 
+	 * 
+	 * @throws CacheException if CacheException occurs
 	 */
 	public synchronized void clearData() 
 		throws CacheException
@@ -712,11 +661,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		setDirty(false);
 		setEmpty();
 	}
-	
-	/**
-	 * 
-	 * @throws CacheException
-	 */
+
 	public synchronized void exportData() throws CacheException {
 		exportData( -1 );
 	}
@@ -727,7 +672,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * In-Status:  EMPTY, EVICTABLE, EVICTED, READ;
 	 * Out-Status: EMPTY, EVICTABLE, EVICTED, READ.
 	 * 
-	 * @throws CacheException 
+	 * @param replication ?
+	 * @throws CacheException if CacheException occurs
 	 */
 	public synchronized void exportData( int replication ) 
 		throws CacheException 
@@ -736,25 +682,12 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		_hdfsFileExists = true;
 	}
 
-	/**
-	 * 
-	 * @param fName
-	 * @param outputFormat
-	 * @throws CacheException
-	 */
 	public synchronized void exportData(String fName, String outputFormat)
 		throws CacheException
 	{
 		exportData(fName, outputFormat, -1, null);
 	}
-	
-	/**
-	 * 
-	 * @param fName
-	 * @param outputFormat
-	 * @param formatProperties
-	 * @throws CacheException
-	 */
+
 	public synchronized void exportData(String fName, String outputFormat, FileFormatProperties formatProperties)
 		throws CacheException
 	{
@@ -772,9 +705,11 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * the output format and most importantly would bypass reblocking during write (which effects the
 	 * potential degree of parallelism). However, we copy files on HDFS if certain criteria are given.  
 	 * 
-	 * @param fName
-	 * @param outputFormat
-	 * @throws CacheException
+	 * @param fName file name
+	 * @param outputFormat format
+	 * @param replication ?
+	 * @param formatProperties file format properties
+	 * @throws CacheException if CacheException occurs
 	 */
 	public synchronized void exportData (String fName, String outputFormat, int replication, FileFormatProperties formatProperties)
 		throws CacheException
@@ -909,7 +844,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * Low-level cache I/O method that physically restores the data blob to
 	 * main memory. Must be defined by a subclass, never called by users.
 	 *
-	 * @throws CacheException 
+	 * @throws CacheException if CacheException occurs
 	 */
 	protected void restoreBlobIntoMemory() 
 		throws CacheException
@@ -938,11 +873,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	    if( LOG.isTraceEnabled() )
 	    	LOG.trace("Restoring matrix - COMPLETED ... " + (System.currentTimeMillis()-begin) + " msec.");
 	}		
-	/**
-	 * 
-	 * @param fname
-	 * @return
-	 */
+
 	protected abstract T readBlobFromCache(String fname)
 		throws IOException;
 	
@@ -963,17 +894,15 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		if( LOG.isTraceEnabled() )
 			LOG.trace("Freeing evicted matrix - COMPLETED ... " + (System.currentTimeMillis()-begin) + " msec.");		
 	}
-	
-	/**
-	 * 
-	 */
+
 	protected boolean isBelowCachingThreshold() {
 		return (_data.getInMemorySize() <= CACHING_THRESHOLD);
 	}
 	
-	/**
-	 * 
-	 */
+	protected ValueType[] getSchema() {
+		return null;
+	}
+
 	@Override //Data
 	public synchronized String getDebugName() {
 		int maxLength = 23;
@@ -983,12 +912,6 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		return getVarName() + " " + debugNameEnding;
 	}
 
-	/**
-	 * 
-	 * @param fname
-	 * @return
-	 * @throws IOException
-	 */
 	protected T readBlobFromHDFS(String fname) 
 		throws IOException 
 	{
@@ -996,60 +919,19 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		MatrixCharacteristics mc = iimd.getMatrixCharacteristics();
 		return readBlobFromHDFS(fname, mc.getRows(), mc.getCols());
 	}
-	
-	/**
-	 * 
-	 * @param fname
-	 * @param rlen
-	 * @param clen
-	 * @return
-	 * @throws IOException
-	 */
+
 	protected abstract T readBlobFromHDFS(String fname, long rlen, long clen) 
 		throws IOException;
-	
-	/**
-	 * 
-	 * @param rdd
-	 * @param status
-	 * @return
-	 * @throws IOException
-	 */
+
 	protected abstract T readBlobFromRDD(RDDObject rdd, MutableBoolean status)
 		throws IOException;
-	
-	/**
-	 * 
-	 * @param fname
-	 * @param ofmt
-	 * @param rep
-	 * @param fprop
-	 * @throws IOException
-	 * @throws DMLRuntimeException
-	 */
+
 	protected abstract void writeBlobToHDFS(String fname, String ofmt, int rep, FileFormatProperties fprop) 
 		throws IOException, DMLRuntimeException;
-	
-	/**
-	 * 
-	 * @param rdd
-	 * @param fname
-	 * @param ofmt
-	 * @throws IOException
-	 * @throws DMLRuntimeException
-	 */
+
 	protected abstract void writeBlobFromRDDtoHDFS(RDDObject rdd, String fname, String ofmt) 
 		throws IOException, DMLRuntimeException;
-		
-	
-	/**
-	 * 
-	 * @param filePathAndName
-	 * @param outputFormat
-	 * @param formatProperties
-	 * @throws DMLRuntimeException
-	 * @throws IOException
-	 */
+
 	protected void writeMetaData (String filePathAndName, String outputFormat, FileFormatProperties formatProperties)
 		throws DMLRuntimeException, IOException
 	{		
@@ -1073,15 +955,13 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			{
 				mc = new MatrixCharacteristics(mc.getRows(), mc.getCols(), ConfigurationManager.getBlocksize(), ConfigurationManager.getBlocksize(), mc.getNonZeros());
 			}
-			MapReduceTool.writeMetaDataFile (filePathAndName + ".mtd", valueType, null, dataType, mc, oinfo, formatProperties);
+			
+			//write the actual meta data file
+			MapReduceTool.writeMetaDataFile (filePathAndName + ".mtd", valueType, 
+					getSchema(), dataType, mc, oinfo, formatProperties);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param outputFormat
-	 * @return
-	 */
+
 	protected boolean isEqualOutputFormat( String outputFormat )
 	{
 		boolean ret = true;
@@ -1107,10 +987,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	protected int getUniqueCacheID() {
 		return _uniqueID;
 	}
-	
-	/**
-	 * 
-	 */
+
 	protected String getCacheFilePathAndName () {
 		if( _cacheFileName==null ) {
 			StringBuilder sb = new StringBuilder();
@@ -1143,7 +1020,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * 
 	 * @param isModify : <code>true</code> for the exclusive "modify" lock,
 	 *     <code>false</code> for a shared "read" lock.
-	 * @throws CacheException
+	 * @param restore true if restore
+	 * @throws CacheException if CacheException occurs
 	 */
 	protected void acquire (boolean isModify, boolean restore) 
 		throws CacheException
@@ -1181,11 +1059,12 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * It is expected that you eliminate all external references to the blob
 	 * prior to calling this method, because otherwise eviction will
 	 * duplicate the blob, but not release memory.  This method has to be
-	 * called only once per process and coupled with {@link #acquire(boolean)},
+	 * called only once per process and coupled with {@link #acquire(boolean, boolean)},
 	 * because it decrements the lock count and the other method increments
 	 * the lock count.
 	 * 
-	 * @throws CacheException 
+	 * @param cacheNoWrite ?
+	 * @throws CacheException if CacheException occurs
 	 */
 	protected void release(boolean cacheNoWrite)
 		throws CacheException
@@ -1321,11 +1200,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			_cache = null;
 		}
 	}
-	
-	/**
-	 * 
-	 * @param add
-	 */
+
 	protected void updateStatusPinned(boolean add) {
 		if( _data != null ) { //data should never be null
 			long size = sizePinned.get();
@@ -1333,20 +1208,13 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 			sizePinned.set( Math.max(size,0) );
 		}
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	protected long getPinnedSize() {
 		return sizePinned.get();
 	}
 	
 	// --------- STATIC CACHE INIT/CLEANUP OPERATIONS ----------
-	
-	/**
-	 * 
-	 */
+
 	public synchronized static void cleanupCacheDir() {
 		//cleanup remaining cached writes
 		LazyWriteBuffer.cleanup();
@@ -1358,7 +1226,7 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	/**
 	 * Deletes the DML-script-specific caching working dir.
 	 * 
-	 * @param withDir
+	 * @param withDir if true, delete directory
 	 */
 	public synchronized static void cleanupCacheDir(boolean withDir)
 	{
@@ -1384,7 +1252,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	
 	/**
 	 * Inits caching with the default uuid of DMLScript
-	 * @throws IOException 
+	 * 
+	 * @throws IOException if IOException occurs
 	 */
 	public synchronized static void initCaching() 
 		throws IOException
@@ -1397,7 +1266,8 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 	 * 
 	 * Takes the UUID in order to allow for custom uuid, e.g., for remote parfor caching
 	 * 
-	 * @throws IOException 
+	 * @param uuid ID
+	 * @throws IOException if IOException occurs
 	 */
 	public synchronized static void initCaching( String uuid ) 
 		throws IOException
@@ -1431,13 +1301,6 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		_activeFlag = true;
 	}
 
-	/**
-	 * 
-	 * @param fName
-	 * @param outputFormat
-	 * @return
-	 * @throws CacheException
-	 */
 	public synchronized boolean moveData(String fName, String outputFormat) 
 		throws CacheException 
 	{	
@@ -1469,4 +1332,38 @@ public abstract class CacheableData<T extends CacheBlock> extends Data
 		return ret;
 	}
 
+	public String toString() {
+		StringBuilder str = new StringBuilder();
+		str.append(getClass().getSimpleName());
+		str.append(": ");
+		str.append(_hdfsFileName + ", ");
+
+		if (_metaData instanceof NumItemsByEachReducerMetaData) {
+			str.append("NumItemsByEachReducerMetaData");
+		} else {
+			try {
+				MatrixFormatMetaData md = (MatrixFormatMetaData) _metaData;
+				if (md != null) {
+					MatrixCharacteristics mc = ((MatrixDimensionsMetaData) _metaData).getMatrixCharacteristics();
+					str.append(mc.toString());
+
+					InputInfo ii = md.getInputInfo();
+					if (ii == null)
+						str.append("null");
+					else {
+						str.append(", ");
+						str.append(InputInfo.inputInfoToString(ii));
+					}
+				} else {
+					str.append("null, null");
+				}
+			} catch (Exception ex) {
+				LOG.error(ex);
+			}
+		}
+		str.append(", ");
+		str.append(isDirty() ? "dirty" : "not-dirty");
+
+		return str.toString();
+	}
 }

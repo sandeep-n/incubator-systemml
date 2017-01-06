@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 
 import org.apache.sysml.parser.LanguageException.LanguageErrorCodes;
+import org.apache.sysml.runtime.util.ConvolutionUtils;
 
 public class BuiltinFunctionExpression extends DataIdentifier 
 {
@@ -309,8 +310,9 @@ public class BuiltinFunctionExpression extends DataIdentifier
 	 * Validate parse tree : Process BuiltinFunction Expression in an assignment
 	 * statement
 	 * 
-	 * @throws LanguageException
+	 * @throws LanguageException if LanguageException occurs
 	 */
+	@Override
 	public void validateExpression(HashMap<String, DataIdentifier> ids, HashMap<String, ConstIdentifier> constVars, boolean conditional)
 			throws LanguageException {
 		
@@ -1100,7 +1102,19 @@ public class BuiltinFunctionExpression extends DataIdentifier
 			output.setDimensions(id.getDim1(), id2.getDim2());
 			output.setBlockDimensions(id.getRowsInBlock(), id.getColumnsInBlock()); 
 			break;
-			
+		
+		case BIAS_ADD:
+		{
+			Expression input = _args[0];
+			Expression bias = _args[1];
+			output.setDataType(DataType.MATRIX);
+			output.setValueType(ValueType.DOUBLE);
+			output.setDimensions(input.getOutput().getDim1(), input.getOutput().getDim2());
+			output.setBlockDimensions(input.getOutput().getRowsInBlock(), input.getOutput().getColumnsInBlock());
+			checkMatrixParam(input);
+			checkMatrixParam(bias);
+			break;
+		}
 		case CONV2D:
 		case CONV2D_BACKWARD_FILTER:
 		case CONV2D_BACKWARD_DATA:
@@ -1121,14 +1135,57 @@ public class BuiltinFunctionExpression extends DataIdentifier
 			// conv2d_backward_filter and conv2d_backward_data
 			Expression input = _args[0];			// For conv2d_backward_filter, this is input and for conv2d_backward_data, this is filter
 			
+			Expression filter = null;
 			if(!(this.getOpCode() == BuiltinFunctionOp.MAX_POOL || this.getOpCode() == BuiltinFunctionOp.AVG_POOL)) {
-				Expression filter = _args[1];			// For conv2d_backward functions, this is dout
+				filter = _args[1];			// For conv2d_backward functions, this is dout
 				checkMatrixParam(filter);
 			}
 			output.setDataType(DataType.MATRIX);
 			output.setValueType(ValueType.DOUBLE);
 			output.setBlockDimensions(input.getOutput().getRowsInBlock(), input.getOutput().getColumnsInBlock());
-			  			
+			// stride1, stride2, padding1, padding2, numImg, numChannels, imgSize, imgSize, 
+ 			// filter_shape1=1, filter_shape2=1, filterSize/poolSize1, filterSize/poolSize1
+ 			if(this.getOpCode() == BuiltinFunctionOp.MAX_POOL_BACKWARD ||
+ 					this.getOpCode() == BuiltinFunctionOp.CONV2D_BACKWARD_DATA) {
+ 				output.setDimensions(input.getOutput().getDim1(), input.getOutput().getDim2());
+ 			}
+ 			else if(this.getOpCode() == BuiltinFunctionOp.CONV2D_BACKWARD_FILTER) {
+ 				output.setDimensions(filter.getOutput().getDim1(), filter.getOutput().getDim2());
+ 			}
+ 			else if(this.getOpCode() == BuiltinFunctionOp.CONV2D || this.getOpCode() == BuiltinFunctionOp.MAX_POOL) {
+ 				try {
+ 					int start = 1;
+ 					if(this.getOpCode() == BuiltinFunctionOp.CONV2D) {
+ 						start = 2;
+ 					}
+ 					long stride_h = (long) getDoubleValue(_args[start++]);
+ 					long stride_w = (long) getDoubleValue(_args[start++]);
+ 					long pad_h = (long) getDoubleValue(_args[start++]);
+ 					long pad_w = (long) getDoubleValue(_args[start++]); 
+ 					start++;
+ 					long C = (long) getDoubleValue(_args[start++]);
+ 					long H = (long) getDoubleValue(_args[start++]);
+ 					long W = (long) getDoubleValue(_args[start++]);
+ 					long K = -1;
+ 					if(this.getOpCode() == BuiltinFunctionOp.CONV2D) {
+ 						K = (long) getDoubleValue(_args[start]);
+ 					}
+ 					start++; start++;
+ 					long R = (long) getDoubleValue(_args[start++]);
+ 					long S = (long) getDoubleValue(_args[start++]);
+ 					long P = ConvolutionUtils.getP(H, R, stride_h, pad_h);
+ 					long Q = ConvolutionUtils.getP(W, S, stride_w, pad_w);
+ 					if(this.getOpCode() == BuiltinFunctionOp.CONV2D)
+ 						output.setDimensions(input.getOutput().getDim1(), K*P*Q);
+ 					else
+ 						output.setDimensions(input.getOutput().getDim1(), C*P*Q);
+ 				}
+ 				catch(Exception e) {
+ 					output.setDimensions(input.getOutput().getDim1(), -1); // To make sure that output dimensions are not incorrect
+ 				}
+ 			}
+ 			else
+ 				throw new LanguageException("Unsupported op: " + this.getOpCode());
 			checkMatrixParam(input);
 			break;
 		}
@@ -1180,21 +1237,10 @@ public class BuiltinFunctionExpression extends DataIdentifier
 		}
 	}
 
-	/**
-	 * 
-	 * @param expr
-	 * @return
-	 */
 	private boolean isConstant(Expression expr) {
 		return ( expr != null && expr instanceof ConstIdentifier );
 	}
 	
-	/**
-	 * 
-	 * @param expr
-	 * @return
-	 * @throws LanguageException
-	 */
 	private double getDoubleValue(Expression expr) 
 		throws LanguageException 
 	{
@@ -1290,11 +1336,6 @@ public class BuiltinFunctionExpression extends DataIdentifier
 		return result;
 	}
 
-	/**
-	 * 
-	 * @param count
-	 * @throws LanguageException
-	 */
 	protected void checkNumParameters(int count) //always unconditional
 		throws LanguageException 
 	{
@@ -1312,11 +1353,6 @@ public class BuiltinFunctionExpression extends DataIdentifier
        	}
 	}
 
-	/**
-	 * 
-	 * @param e
-	 * @throws LanguageException
-	 */
 	protected void checkMatrixParam(Expression e) //always unconditional
 		throws LanguageException 
 	{
@@ -1325,11 +1361,6 @@ public class BuiltinFunctionExpression extends DataIdentifier
 		}
 	}
 	
-	/**
-	 * 
-	 * @param e
-	 * @throws LanguageException
-	 */
 	protected void checkMatrixFrameParam(Expression e) //always unconditional
 		throws LanguageException 
 	{
@@ -1338,11 +1369,6 @@ public class BuiltinFunctionExpression extends DataIdentifier
 		}
 	}
 	
-	/**
-	 * 
-	 * @param e
-	 * @throws LanguageException
-	 */
 	protected void checkMatrixScalarParam(Expression e) //always unconditional
 		throws LanguageException 
 	{
@@ -1351,11 +1377,6 @@ public class BuiltinFunctionExpression extends DataIdentifier
 		}
 	}
 	
-	/**
-	 * 
-	 * @param e
-	 * @throws LanguageException
-	 */
 	private void checkScalarParam(Expression e) //always unconditional
 		throws LanguageException 
 	{
@@ -1364,11 +1385,6 @@ public class BuiltinFunctionExpression extends DataIdentifier
 		}
 	}
 	
-	/**
-	 * 
-	 * @param e
-	 * @throws LanguageException
-	 */
 	private void checkScalarFrameParam(Expression e) //always unconditional
 		throws LanguageException 
 	{
@@ -1376,13 +1392,7 @@ public class BuiltinFunctionExpression extends DataIdentifier
 			raiseValidateError("Expecting scalar parameter for function " + this.getOpCode(), false, LanguageErrorCodes.UNSUPPORTED_PARAMETERS);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param e
-	 * @param vt
-	 * @throws LanguageException
-	 */
+
 	private void checkValueTypeParam(Expression e, ValueType vt) //always unconditional
 		throws LanguageException 
 	{
@@ -1399,11 +1409,6 @@ public class BuiltinFunctionExpression extends DataIdentifier
 		return (e.getOutput().getDim1() != -1 && e.getOutput().getDim2() != -1);
 	}
 	
-	/**
-	 * 
-	 * @param e
-	 * @throws LanguageException
-	 */
 	private void check1DMatrixParam(Expression e) //always unconditional
 		throws LanguageException 
 	{	
@@ -1417,24 +1422,12 @@ public class BuiltinFunctionExpression extends DataIdentifier
 		}
 	}
 
-	/**
-	 * 
-	 * @param expr1
-	 * @param expr2
-	 * @throws LanguageException
-	 */
 	private void checkMatchingDimensions(Expression expr1, Expression expr2) 
 		throws LanguageException 
 	{
 		checkMatchingDimensions(expr1, expr2, false);
 	}
 	
-	/**
-	 * 
-	 * @param expr1
-	 * @param expr2
-	 * @throws LanguageException
-	 */
 	private void checkMatchingDimensions(Expression expr1, Expression expr2, boolean allowsMV) 
 		throws LanguageException 
 	{
@@ -1457,10 +1450,6 @@ public class BuiltinFunctionExpression extends DataIdentifier
 		}
 	}
 	
-	/**
-	 * 
-	 * @throws LanguageException
-	 */
 	private void checkMatchingDimensionsQuantile() 
 		throws LanguageException 
 	{
@@ -1623,6 +1612,8 @@ public class BuiltinFunctionExpression extends DataIdentifier
 			bifop = Expression.BuiltinFunctionOp.EIGEN;
 		else if (functionName.equals("conv2d"))
 			 bifop = Expression.BuiltinFunctionOp.CONV2D;
+		else if (functionName.equals("bias_add"))
+			 bifop = Expression.BuiltinFunctionOp.BIAS_ADD;
 		else if (functionName.equals("conv2d_backward_filter"))
 			 bifop = Expression.BuiltinFunctionOp.CONV2D_BACKWARD_FILTER;
 		else if (functionName.equals("conv2d_backward_data"))

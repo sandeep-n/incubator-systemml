@@ -536,7 +536,7 @@ public class VariableCPInstruction extends CPInstruction
 				Object value = fBlock.get(0,0);
 				ec.releaseFrameInput(input1.getName());
 				ec.setScalarOutput(output.getName(), 
-						ScalarObjectFactory.createScalarObject(fBlock.getSchema().get(0), value));
+						ScalarObjectFactory.createScalarObject(fBlock.getSchema()[0], value));
 			}
 			else { //assume DataType.MATRIX otherwise
 				MatrixBlock mBlock = ec.getMatrixInput(input1.getName());
@@ -649,12 +649,12 @@ public class VariableCPInstruction extends CPInstruction
 	
 	/**
 	 * Handler for mvvar instructions.
-	 * Example: mvvar <srcvar> <destFile> <format>
+	 * Example: mvvar &lt;srcvar&gt; &lt;destFile&gt; &lt;format&gt;
 	 * Move the file pointed by srcvar to destFile. 
 	 * Currently, applicable only when format=binaryblock.
 	 *  
-	 * @param ec
-	 * @throws DMLRuntimeException
+	 * @param ec execution context
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	@SuppressWarnings("rawtypes")
 	private void processMoveInstruction(ExecutionContext ec) throws DMLRuntimeException {
@@ -706,10 +706,10 @@ public class VariableCPInstruction extends CPInstruction
 	
 	/**
 	 * Handler for cpvar instructions.
-	 * Example: cpvar <srcvar> <destvar>
+	 * Example: cpvar &lt;srcvar&gt; &lt;destvar&gt;
 	 * 
-	 * @param ec
-	 * @throws DMLRuntimeException 
+	 * @param ec execution context
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	private void processCopyInstruction(ExecutionContext ec) throws DMLRuntimeException {
 		// get source variable 
@@ -737,7 +737,8 @@ public class VariableCPInstruction extends CPInstruction
 	 * The default behavior is to write out the specified matrix from the instruction, in 
 	 * the format given by the corresponding symbol table entry.
 	 * 
-	 * @throws DMLRuntimeException 
+	 * @param ec execution context
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	private void processWriteInstruction(ExecutionContext ec) 
 		throws DMLRuntimeException 
@@ -748,7 +749,7 @@ public class VariableCPInstruction extends CPInstruction
 		if( input1.getDataType() == DataType.SCALAR ) {
 			writeScalarToHDFS(ec, fname);
 		}
-		else if( input1.getDataType() == DataType.MATRIX ){
+		else if( input1.getDataType() == DataType.MATRIX ) {
 			String outFmt = input3.getName();
 			if (outFmt.equalsIgnoreCase("matrixmarket")) 
 				writeMMFile(ec, fname);
@@ -763,7 +764,7 @@ public class VariableCPInstruction extends CPInstruction
 		else if( input1.getDataType() == DataType.FRAME ) {
 			String outFmt = input3.getName();
 			FrameObject mo = ec.getFrameObject(input1.getName());
-			mo.exportData(fname, outFmt);
+			mo.exportData(fname, outFmt, _formatProperties);
 		}
 	}
 	
@@ -771,9 +772,9 @@ public class VariableCPInstruction extends CPInstruction
 	 * Remove variable instruction externalized as a static function in order to allow various 
 	 * cleanup procedures to use the same codepath as the actual rmVar instruction
 	 * 
-	 * @param ec
-	 * @param varname
-	 * @throws DMLRuntimeException
+	 * @param ec execution context
+	 * @param varname variable name
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	public static void processRemoveVariableInstruction( ExecutionContext ec, String varname ) 
 		throws DMLRuntimeException
@@ -793,8 +794,9 @@ public class VariableCPInstruction extends CPInstruction
 	/**
 	 * Helper function to write CSV files to HDFS.
 	 * 
-	 * @param ec
-	 * @throws DMLRuntimeException
+	 * @param ec execution context
+	 * @param fname file name
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	private void writeCSVFile(ExecutionContext ec, String fname) 
 		throws DMLRuntimeException 
@@ -832,8 +834,10 @@ public class VariableCPInstruction extends CPInstruction
 	
 	/**
 	 * Helper function to write MM files to HDFS.
-	 * @param ec
-	 * @throws DMLRuntimeException
+	 * 
+	 * @param ec execution context
+	 * @param fname file name
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	private void writeMMFile(ExecutionContext ec, String fname) 
 		throws DMLRuntimeException 
@@ -866,7 +870,10 @@ public class VariableCPInstruction extends CPInstruction
 	}
 	/**
 	 * Helper function to write scalars to HDFS based on its value type.
-	 * @throws DMLRuntimeException 
+	 * 
+	 * @param ec execution context
+	 * @param fname file name
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	private void writeScalarToHDFS(ExecutionContext ec, String fname) 
 		throws DMLRuntimeException 
@@ -974,27 +981,7 @@ public class VariableCPInstruction extends CPInstruction
 	public static Instruction prepareCreateMatrixVariableInstruction(String varName, String fileName, boolean fNameOverride, String format) throws DMLRuntimeException {
 		return parseInstruction(getBasicCreateVarString(varName, fileName, fNameOverride, DataType.MATRIX, format));
 	}
-	
-	public static Instruction prepareCreateVariableInstruction(String varName, String fileName, boolean fNameOverride, DataType dt, String format, MatrixCharacteristics mc) throws DMLRuntimeException {
-		StringBuilder sb = new StringBuilder();
-		sb.append(getBasicCreateVarString(varName, fileName, fNameOverride, dt, format));
-		
-		sb.append(Lop.OPERAND_DELIMITOR);
-		sb.append(mc.getRows());
-		sb.append(Lop.OPERAND_DELIMITOR);
-		sb.append(mc.getCols());
-		sb.append(Lop.OPERAND_DELIMITOR);
-		sb.append(mc.getRowsPerBlock());
-		sb.append(Lop.OPERAND_DELIMITOR);
-		sb.append(mc.getColsPerBlock());
-		sb.append(Lop.OPERAND_DELIMITOR);
-		sb.append(mc.getNonZeros());
-		
-		String str = sb.toString();
 
-		return parseInstruction(str);
-	}	
-	
 	public static Instruction prepareCreateVariableInstruction(String varName, String fileName, boolean fNameOverride, DataType dt, String format, MatrixCharacteristics mc, UpdateType update) throws DMLRuntimeException {
 		StringBuilder sb = new StringBuilder();
 		sb.append(getBasicCreateVarString(varName, fileName, fNameOverride, dt, format));
@@ -1070,11 +1057,7 @@ public class VariableCPInstruction extends CPInstruction
 			instString = sb.toString();
 		}
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public boolean isVariableCastInstruction()
 	{
 		return ( opcode == VariableOperationCode.CastAsScalarVariable  ||

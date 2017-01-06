@@ -151,7 +151,7 @@ public class IndexingOp extends Hop
 				{
 					IndexingMethod method = optFindIndexingMethod( _rowLowerEqualsUpper, _colLowerEqualsUpper,
                             input._dim1, input._dim2, _dim1, _dim2);
-					SparkAggType aggtype = (method==IndexingMethod.MR_VRIX) ? 
+					SparkAggType aggtype = (method==IndexingMethod.MR_VRIX || isBlockAligned()) ? 
 							SparkAggType.NONE : SparkAggType.MULTI_BLOCK;
 					
 					Lop dummy = Data.createLiteralLop(ValueType.INT, Integer.toString(-1));
@@ -277,9 +277,9 @@ public class IndexingOp extends Hop
 	 * Indicates if the lbound:rbound expressions is of the form
 	 * "(c * (i - 1) + 1) : (c * i)", where we could use c as a tight size estimate.
 	 * 
-	 * @param lbound
-	 * @param ubound
-	 * @return
+	 * @param lbound lower bound high-level operator
+	 * @param ubound uppser bound high-level operator
+	 * @return true if block indexing expression
 	 */
 	private boolean isBlockIndexingExpression(Hop lbound, Hop ubound) 
 	{
@@ -323,11 +323,28 @@ public class IndexingOp extends Hop
 	}
 	
 	/**
+	 * Indicates if the right indexing ranging is block aligned, i.e., it does not require
+	 * aggregation across blocks due to shifting.
 	 * 
-	 * @param lbound
-	 * @param ubound
-	 * @return
+	 * @return true if block aligned
 	 */
+	private boolean isBlockAligned() {
+		Hop input1 = getInput().get(0); //original matrix
+		Hop input2 = getInput().get(1); //inpRowL
+		Hop input3 = getInput().get(2); //inpRowU
+		Hop input4 = getInput().get(3); //inpColL
+		Hop input5 = getInput().get(4); //inpRowU
+		
+		long rl = (input2 instanceof LiteralOp) ? (HopRewriteUtils.getIntValueSafe((LiteralOp)input2)) : -1;
+		long ru = (input3 instanceof LiteralOp) ? (HopRewriteUtils.getIntValueSafe((LiteralOp)input3)) : -1;
+		long cl = (input4 instanceof LiteralOp) ? (HopRewriteUtils.getIntValueSafe((LiteralOp)input4)) : -1;
+		long cu = (input5 instanceof LiteralOp) ? (HopRewriteUtils.getIntValueSafe((LiteralOp)input5)) : -1;
+		int brlen = (int)input1.getRowsInBlock();
+		int bclen = (int)input1.getColsInBlock();
+		
+		return OptimizerUtils.isIndexingRangeBlockAligned(rl, ru, cl, cu, brlen, bclen);
+	}
+
 	private long getBlockIndexingExpressionSize(Hop lbound, Hop ubound) 
 	{
 		//NOTE: ensure consistency with isBlockIndexingExpression
@@ -370,17 +387,7 @@ public class IndexingOp extends Hop
 		
 		return _etype;
 	}
-	
-	/**
-	 * 
-	 * @param singleRow
-	 * @param singleCol
-	 * @param m1_dim1
-	 * @param m1_dim2
-	 * @param m2_dim1
-	 * @param m2_dim2
-	 * @return
-	 */
+
 	private static IndexingMethod optFindIndexingMethod( boolean singleRow, boolean singleCol, long m1_dim1, long m1_dim2, long m2_dim1, long m2_dim2 )
 	{
 		if(    singleRow && m1_dim2 == m2_dim2 && m2_dim2!=-1

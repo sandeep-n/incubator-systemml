@@ -22,6 +22,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.matrix.data.LibMatrixCUDA;
 import org.apache.sysml.utils.Statistics;
@@ -32,12 +34,19 @@ import jcuda.jcublas.cublasHandle;
 import jcuda.jcudnn.JCudnn;
 import jcuda.runtime.JCuda;
 import jcuda.jcudnn.cudnnHandle;
+import jcuda.jcusparse.JCusparse;
+import jcuda.jcusparse.cusparseHandle;
+import jcuda.runtime.cudaDeviceProp;
 import static jcuda.jcudnn.JCudnn.cudnnCreate;
 import static jcuda.jcublas.JCublas2.cublasCreate;
 import static jcuda.jcublas.JCublas2.cublasDestroy;
 import static jcuda.jcudnn.JCudnn.cudnnDestroy;
+import static jcuda.jcusparse.JCusparse.cusparseDestroy;
+import static jcuda.jcusparse.JCusparse.cusparseCreate;
 import static jcuda.driver.JCudaDriver.cuInit;
 import static jcuda.driver.JCudaDriver.cuDeviceGetCount;
+import static jcuda.runtime.JCuda.cudaGetDeviceProperties;
+import static jcuda.runtime.JCuda.cudaGetDeviceCount;
 import static jcuda.runtime.JCuda.cudaMemGetInfo;
 import static jcuda.runtime.cudaError.cudaSuccess;
 
@@ -49,7 +58,13 @@ import static jcuda.runtime.cudaError.cudaSuccess;
  *
  */
 public class JCudaContext extends GPUContext {
-	
+
+	// The minimum CUDA Compute capability needed for SystemML.
+	// After compute capability 3.0, 2^31 - 1 blocks and 1024 threads per block are supported.
+	// If SystemML needs to run on an older card, this logic can be revisited.
+	final int MAJOR_REQUIRED = 3;
+	final int MINOR_REQUIRED = 0;
+
 	private static final Log LOG = LogFactory.getLog(JCudaContext.class.getName());
 	
 	public static boolean DEBUG = false;
@@ -57,15 +72,16 @@ public class JCudaContext extends GPUContext {
 	public static long totalNumBytes = 0;
 	public static AtomicLong availableNumBytesWithoutUtilFactor = new AtomicLong(0);
 	// Fraction of available memory to use. The available memory is computer when the JCudaContext is created
-	// to handle the tradeoff on calling cudaMemGetInfo too often. 
-	public static double GPU_MEMORY_UTILIZATION_FACTOR = 0.9; 
-	public static boolean REFRESH_AVAILABLE_MEMORY_EVERY_TIME = true;
-	
+	// to handle the tradeoff on calling cudaMemGetInfo too often.
+	public boolean REFRESH_AVAILABLE_MEMORY_EVERY_TIME = ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.REFRESH_AVAILABLE_MEMORY_EVERY_TIME);
+	// Invoke cudaMemGetInfo to get available memory information. Useful if GPU is shared among multiple application.
+	public double GPU_MEMORY_UTILIZATION_FACTOR = ConfigurationManager.getDMLConfig().getDoubleValue(DMLConfig.GPU_MEMORY_UTILIZATION_FACTOR);
 	static {
 		long start = System.nanoTime();
 		JCuda.setExceptionsEnabled(true);
 		JCudnn.setExceptionsEnabled(true);
 		JCublas2.setExceptionsEnabled(true);
+		JCusparse.setExceptionsEnabled(true);
 		JCudaDriver.setExceptionsEnabled(true);
 		cuInit(0); // Initialize the driver
 		// Obtain the number of devices
@@ -75,7 +91,8 @@ public class JCudaContext extends GPUContext {
         LOG.info("Total number of GPUs on the machine: " + deviceCount);
         Statistics.cudaInitTime = System.nanoTime() - start;
 	}
-	
+
+	@Override
 	public long getAvailableMemory() {
 		if(REFRESH_AVAILABLE_MEMORY_EVERY_TIME) {
 			long free [] = { 0 };
@@ -90,9 +107,33 @@ public class JCudaContext extends GPUContext {
 		}
 		return (long) (availableNumBytesWithoutUtilFactor.get()*GPU_MEMORY_UTILIZATION_FACTOR);
 	}
+
+	@Override
+	public void ensureComputeCapability() throws DMLRuntimeException {
+		int[] devices =  {-1};
+		cudaGetDeviceCount(devices);
+		if (devices[0] == -1){
+			throw new DMLRuntimeException("Call to cudaGetDeviceCount returned 0 devices");
+		}
+		boolean isComputeCapable = true;
+		for (int i=0; i<devices[0]; i++) {
+			cudaDeviceProp properties = new cudaDeviceProp();
+			cudaGetDeviceProperties(properties, i);
+			int major = properties.major;
+			int minor = properties.minor;
+			if (major < MAJOR_REQUIRED) {
+				isComputeCapable = false;
+			} else if (major == MAJOR_REQUIRED && minor < MINOR_REQUIRED) {
+				isComputeCapable = false;
+			}
+		}
+		if (!isComputeCapable) {
+			throw new DMLRuntimeException("One of the CUDA cards on the system has compute capability lower than " + MAJOR_REQUIRED + "." + MINOR_REQUIRED);
+		}
+	}
 	
 	
-	public JCudaContext() {
+	public JCudaContext() throws DMLRuntimeException {
 		if(isGPUContextCreated) {
 			// Wait until it is deleted. This case happens during multi-threaded testing.
 			// This also allows for multi-threaded execute calls
@@ -115,6 +156,11 @@ public class JCudaContext extends GPUContext {
 		cudnnCreate(LibMatrixCUDA.cudnnHandle);
 		LibMatrixCUDA.cublasHandle = new cublasHandle();
 		cublasCreate(LibMatrixCUDA.cublasHandle);
+		// For cublas v2, cublasSetPointerMode tells Cublas whether to expect scalar arguments on device or on host
+		// This applies to arguments like "alpha" in Dgemm, and "y" in Ddot.
+		// cublasSetPointerMode(LibMatrixCUDA.cublasHandle, cublasPointerMode.CUBLAS_POINTER_MODE_DEVICE); 
+		LibMatrixCUDA.cusparseHandle = new cusparseHandle();
+		cusparseCreate(LibMatrixCUDA.cusparseHandle);
 		Statistics.cudaLibrariesInitTime = System.nanoTime() - start;
 		
 		long free [] = { 0 };
@@ -128,6 +174,8 @@ public class JCudaContext extends GPUContext {
         }
         LOG.info("Total GPU memory: " + (totalNumBytes*(1e-6)) + " MB");
         LOG.info("Available GPU memory: " + (availableNumBytesWithoutUtilFactor.get()*(1e-6)) + " MB");
+        
+        LibMatrixCUDA.kernels = new JCudaKernels();
 	}
 
 	@Override
@@ -136,6 +184,7 @@ public class JCudaContext extends GPUContext {
 			synchronized(isGPUContextCreated) {
 				cudnnDestroy(LibMatrixCUDA.cudnnHandle);
 				cublasDestroy(LibMatrixCUDA.cublasHandle);
+				cusparseDestroy(LibMatrixCUDA.cusparseHandle);
 				currContext = null;
 				isGPUContextCreated = false;
 			}

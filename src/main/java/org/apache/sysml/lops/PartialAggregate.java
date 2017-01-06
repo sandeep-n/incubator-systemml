@@ -72,14 +72,6 @@ public class PartialAggregate extends Lop
 	}
 
 	public PartialAggregate( Lop input, Aggregate.OperationTypes op,
-			PartialAggregate.DirectionTypes direct, DataType dt, ValueType vt, ExecType et)
-		throws LopsException 
-	{
-		super(Lop.Type.PartialAggregate, dt, vt);
-		init(input, op, direct, dt, vt, et);
-	}
-	
-	public PartialAggregate( Lop input, Aggregate.OperationTypes op,
 			PartialAggregate.DirectionTypes direct, DataType dt, ValueType vt, ExecType et, int k)
 		throws LopsException 
 	{
@@ -100,10 +92,12 @@ public class PartialAggregate extends Lop
 	/**
 	 * Constructor to setup a partial aggregate operation.
 	 * 
-	 * @param input
-	 * @param op
-	 * @return 
-	 * @throws LopsException
+	 * @param input low-level operator
+	 * @param op aggregate operation type
+	 * @param direct partial aggregate directon type
+	 * @param dt data type
+	 * @param vt value type
+	 * @param et execution type
 	 */
 	private void init(Lop input,
 			Aggregate.OperationTypes op,
@@ -141,12 +135,7 @@ public class PartialAggregate extends Lop
 	{
 		_dropCorr = true;
 	}
-	
-	public static CorrectionLocationType decodeCorrectionLocation(String loc) 
-	{
-		return CorrectionLocationType.valueOf(loc);
-	}
-	
+
 	/**
 	 * This method computes the location of "correction" terms in the output
 	 * produced by PartialAgg instruction.
@@ -162,6 +151,9 @@ public class PartialAggregate extends Lop
 	 * Computed information is encoded in the PartialAgg instruction so that the
 	 * appropriate aggregate operator is used at runtime (see:
 	 * dml.runtime.matrix.operator.AggregateOperator.java and dml.runtime.matrix)
+	 * 
+	 * @return correct location
+	 * @throws LopsException if LopsException occurs
 	 */
 	public CorrectionLocationType getCorrectionLocation() 
 		throws LopsException 
@@ -335,12 +327,6 @@ public class PartialAggregate extends Lop
 		return sb.toString();
 	}
 
-	/**
-	 * 
-	 * @param op
-	 * @param dir
-	 * @return
-	 */
 	public static String getOpcode(Aggregate.OperationTypes op, DirectionTypes dir) 
 	{
 		switch( op )

@@ -27,6 +27,7 @@ import java.io.OutputStreamWriter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map.Entry;
@@ -54,12 +55,13 @@ public class RecodeAgent extends Encoder
 
 	private int[] _mvrcdList = null;
 	private int[] _fullrcdList = null;
-
-	// HashMap< columnID, HashMap<distinctValue, count> >
+	
+	//recode maps and custom map for partial recode maps 
 	private HashMap<Integer, HashMap<String, Long>> _rcdMaps  = new HashMap<Integer, HashMap<String, Long>>();
 	private HashMap<Integer, HashMap<String,String>> _finalMaps = null;
+	private HashMap<Integer, HashSet<Object>> _rcdMapsPart = null;
 	
-	public RecodeAgent(JSONObject parsedSpec, List<String> colnames, int clen)
+	public RecodeAgent(JSONObject parsedSpec, String[] colnames, int clen)
 		throws JSONException 
 	{
 		super(null, clen);
@@ -90,6 +92,10 @@ public class RecodeAgent extends Encoder
 	
 	public HashMap<Integer, HashMap<String,Long>> getCPRecodeMaps() { 
 		return _rcdMaps; 
+	}
+	
+	public HashMap<Integer, HashSet<Object>> getCPRecodeMapsPartial() { 
+		return _rcdMapsPart; 
 	}
 	
 	public HashMap<Integer, HashMap<String,String>> getRecodeMaps() {
@@ -139,9 +145,6 @@ public class RecodeAgent extends Encoder
 	/**
 	 * Method to output transformation metadata from the mappers. 
 	 * This information is collected and merged by the reducers.
-	 * 
-	 * @param out
-	 * @throws IOException
 	 */
 	@Override
 	public void mapOutputTransformationMetadata(OutputCollector<IntWritable, DistinctValue> out, int taskID, TfUtils agents) throws IOException {
@@ -196,12 +199,13 @@ public class RecodeAgent extends Encoder
 	 * - just mv imputed (w/ global_mode)	(write .impute)
 	 * - both recoded and mv imputed		(write .map, .ndistinct, .mode, .impute)
 	 * 
-	 * @param map
-	 * @param outputDir
-	 * @param colID
-	 * @param fs
-	 * @param mvagent
-	 * @throws IOException
+	 * @param map recode maps
+	 * @param outputDir output directory
+	 * @param colID column id
+	 * @param fs file system
+	 * @param agents ?
+	 * @param fromCP ?
+	 * @throws IOException if IOException occurs
 	 */
 	private void writeMetadata(HashMap<String,Long> map, String outputDir, int colID, FileSystem fs, TfUtils agents, boolean fromCP) throws IOException {
 		// output recode maps and mode
@@ -298,10 +302,6 @@ public class RecodeAgent extends Encoder
 	
 	/** 
 	 * Method to merge map output transformation metadata.
-	 * 
-	 * @param values
-	 * @return
-	 * @throws IOException 
 	 */
 	@Override
 	public void mergeAndOutputTransformationMetadata(Iterator<DistinctValue> values, String outputDir, int colID, FileSystem fs, TfUtils agents) throws IOException {
@@ -329,9 +329,6 @@ public class RecodeAgent extends Encoder
 	
 	/**
 	 * Method to load recode maps of all attributes, at once.
-	 * 
-	 * @param job
-	 * @throws IOException
 	 */
 	@Override
 	public void loadTxMtd(JobConf job, FileSystem fs, Path txMtdDir, TfUtils agents) throws IOException {
@@ -368,12 +365,6 @@ public class RecodeAgent extends Encoder
 		}
 	}	
 
-	/**
-	 * 
-	 * @param colID
-	 * @param key
-	 * @return
-	 */
 	private String lookupRCDMap(int colID, String key) {
 		if( _finalMaps!=null )
 			return _finalMaps.get(colID).get(key);
@@ -400,7 +391,7 @@ public class RecodeAgent extends Encoder
 	public void build(FrameBlock in) {
 		if( !isApplicable() )
 			return;		
-		
+
 		Iterator<String[]> iter = in.getStringRowIterator();
 		while( iter.hasNext() ) {
 			String[] row = iter.next(); 
@@ -413,16 +404,38 @@ public class RecodeAgent extends Encoder
 				HashMap<String,Long> map = _rcdMaps.get(colID);
 				String key = row[colID-1];
 				if( key!=null && !key.isEmpty() && !map.containsKey(key) )
-					map.put(key, new Long(map.size()+1));
+					map.put(key, Long.valueOf(map.size()+1));
 			}
+		}
+	}
+
+	public void buildPartial(FrameBlock in) {
+		if( !isApplicable() )
+			return;		
+
+		//ensure allocated partial recode map
+		if( _rcdMapsPart == null )
+			_rcdMapsPart = new HashMap<Integer, HashSet<Object>>();
+		
+		//construct partial recode map (tokens w/o codes)
+		//iterate over columns for sequential access
+		for( int j=0; j<_colList.length; j++ ) {
+			int colID = _colList[j]; //1-based
+			//allocate column map if necessary
+			if( !_rcdMapsPart.containsKey(colID) ) 
+				_rcdMapsPart.put(colID, new HashSet<Object>());
+			HashSet<Object> map = _rcdMapsPart.get(colID);
+			//probe and build column map
+			for( int i=0; i<in.getNumRows(); i++ )
+				map.add(in.get(i, colID-1));
+			//cleanup unnecessary entries once
+			map.remove(null);
+			map.remove("");
 		}
 	}
 	
 	/**
 	 * Method to apply transformations.
-	 * 
-	 * @param words
-	 * @return
 	 */
 	@Override
 	public String[] apply(String[] words) 
@@ -495,7 +508,7 @@ public class RecodeAgent extends Encoder
 	 * Construct the recodemaps from the given input frame for all 
 	 * columns registered for recode.
 	 * 
-	 * @param frame
+	 * @param meta frame block
 	 */
 	public void initMetaData( FrameBlock meta ) {
 		if( meta == null || meta.getNumRows()<=0 )
@@ -508,10 +521,10 @@ public class RecodeAgent extends Encoder
 	}
 	
 	/**
-	 * 
-	 * @param token
-	 * @param code
-	 * @return
+	 * Returns the Recode map entry which consists of concatenation of code, delimiter and token. 
+	 * @param token	is part of Recode map
+	 * @param code  is code for token 
+	 * @return the concatenation of code and token with delimiter in between
 	 */
 	public static String constructRecodeMapEntry(String token, Long code) {
 		return token + Lop.DATATYPE_PREFIX + code.toString();

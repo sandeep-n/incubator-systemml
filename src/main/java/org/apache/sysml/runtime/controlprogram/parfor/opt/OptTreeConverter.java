@@ -91,9 +91,6 @@ public class OptTreeConverter
 	//internal state
 	private static OptTreePlanMappingAbstract _hlMap = null; 
 	private static OptTreePlanMappingRuntime  _rtMap = null;	
-	private static OptNode _tmpParent   = null;
-	private static OptNode _tmpChildOld = null;
-	private static OptNode _tmpChildNew = null;
 	
 	static
 	{
@@ -125,27 +122,7 @@ public class OptTreeConverter
 		
 		return tree;
 	}
-	
-	/**
-	 * 
-	 * @param ck
-	 * @param cm
-	 * @param pfpb
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static OptTree createOptTree( int ck, double cm, ParForProgramBlock pfpb ) 
-		throws DMLRuntimeException
-	{
-		// TODO: Passing an empty variable map here, for now. Must be reevaluated 
-		// whenever this function is used.
-		LocalVariableMap vars = new LocalVariableMap();
-		OptNode root = rCreateOptNode( pfpb, vars, true, true );		
-		OptTree tree = new OptTree(ck, cm, root);
-			
-		return tree;
-	}
-	
+
 	public static OptTree createAbstractOptTree( int ck, double cm, ParForStatementBlock pfsb, ParForProgramBlock pfpb, Set<String> memo, ExecutionContext ec ) 
 		throws DMLRuntimeException
 	{
@@ -165,14 +142,6 @@ public class OptTreeConverter
 		return tree;
 	}
 
-	/**
-	 * 
-	 * @param pb
-	 * @param vars
-	 * @param topLevel
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
 	public static OptNode rCreateOptNode( ProgramBlock pb, LocalVariableMap vars, boolean topLevel, boolean storeObjs ) 
 		throws DMLRuntimeException 
 	{
@@ -285,16 +254,7 @@ public class OptTreeConverter
 			
 		return node;
 	}
-	
 
-
-	/**
-	 * 
-	 * @param instset
-	 * @param vars
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
 	public static ArrayList<OptNode> createOptNodes (ArrayList<Instruction> instset, LocalVariableMap vars, boolean storeObjs) 
 		throws DMLRuntimeException
 	{
@@ -303,14 +263,7 @@ public class OptTreeConverter
 			tmp.add( createOptNode(inst,vars,storeObjs) );
 		return tmp;
 	}
-	
-	/**
-	 * 
-	 * @param inst
-	 * @param vars
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static OptNode createOptNode( Instruction inst, LocalVariableMap vars, boolean storeObjs ) 
 		throws DMLRuntimeException
 	{
@@ -348,17 +301,7 @@ public class OptTreeConverter
 		
 		return node;
 	}
-	
-	/**
-	 * 
-	 * @param sb
-	 * @param pb
-	 * @param vars
-	 * @param topLevel
-	 * @return
-	 * @throws DMLRuntimeException
-	 * @throws HopsException
-	 */
+
 	public static OptNode rCreateAbstractOptNode( StatementBlock sb, ProgramBlock pb, LocalVariableMap vars, boolean topLevel, Set<String> memo ) 
 		throws DMLRuntimeException, HopsException 
 	{
@@ -547,14 +490,6 @@ public class OptTreeConverter
 		return node;
 	}
 
-	/**
-	 * 
-	 * @param hops
-	 * @param vars
-	 * @return
-	 * @throws DMLRuntimeException 
-	 * @throws HopsException 
-	 */
 	public static ArrayList<OptNode> createAbstractOptNodes(ArrayList<Hop> hops, LocalVariableMap vars, Set<String> memo ) 
 		throws DMLRuntimeException, HopsException 
 	{
@@ -570,15 +505,7 @@ public class OptTreeConverter
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param hop
-	 * @param vars
-	 * @return
-	 * @throws DMLRuntimeException  
-	 * @throws HopsException 
-	 */
+
 	public static ArrayList<OptNode> rCreateAbstractOptNodes(Hop hop, LocalVariableMap vars, Set<String> memo) 
 		throws DMLRuntimeException, HopsException 
 	{
@@ -671,11 +598,6 @@ public class OptTreeConverter
 		return ret;
 	}
 
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 */
 	public static boolean rContainsMRJobInstruction( ProgramBlock pb, boolean inclFunctions )
 	{
 		boolean ret = false;
@@ -728,22 +650,12 @@ public class OptTreeConverter
 
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 */
+
 	public static boolean containsMRJobInstruction( ProgramBlock pb, boolean inclCPFile, boolean inclSpark )
 	{
 		return containsMRJobInstruction(pb.getInstructions(), inclCPFile, inclSpark);
 	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 */
+
 	public static boolean containsMRJobInstruction( ArrayList<Instruction> instSet, boolean inclCPFile, boolean inclSpark )
 	{
 		boolean ret = false;
@@ -759,12 +671,7 @@ public class OptTreeConverter
 
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param pb
-	 * @return
-	 */
+
 	public static boolean containsFunctionCallInstruction( ProgramBlock pb )
 	{
 		boolean ret = false;
@@ -777,16 +684,7 @@ public class OptTreeConverter
 
 		return ret;
 	}	
-	
-	
-	/**
-	 * 
-	 * @param inst
-	 * @param on
-	 * @param vars
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	private static OptNodeStatistics analyzeStatistics(Instruction inst, OptNode on, LocalVariableMap vars) 
 		throws DMLRuntimeException 
 	{
@@ -884,14 +782,6 @@ public class OptTreeConverter
 		return ret; //null if not reqistered for profiling
 	}
 
-	/**
-	 * 
-	 * @param parent
-	 * @param n
-	 * @param pbOld
-	 * @param pbNew
-	 * @throws DMLRuntimeException 
-	 */
 	public static void replaceProgramBlock(OptNode parent, OptNode n, ProgramBlock pbOld, ProgramBlock pbNew, boolean rtMap) 
 		throws DMLRuntimeException
 	{
@@ -939,13 +829,7 @@ public class OptTreeConverter
 		else
 			_hlMap.replaceMapping(pbNew, n);
 	}
-	
-	/**
-	 * 
-	 * @param pbs
-	 * @param pbOld
-	 * @param pbNew
-	 */
+
 	public static void replaceProgramBlock(ArrayList<ProgramBlock> pbs, ProgramBlock pbOld, ProgramBlock pbNew)
 	{
 		int len = pbs.size();
@@ -967,127 +851,6 @@ public class OptTreeConverter
 	{
 		return _hlMap;
 	}
-	
-	public static OptTreePlanMappingRuntime getRuntimePlanMapping()
-	{
-		return _rtMap;
-	}
-	
-	/**
-	 * 
-	 * @param pRoot
-	 * @param hlNodeID
-	 * @param newRtNode
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static OptNode exchangeTemporary(OptNode pRoot, long hlNodeID, OptNode newRtNode) 
-		throws DMLRuntimeException 
-	{
-		OptNode hlNode = _hlMap.getOptNode(hlNodeID);
-		if( hlNode.getNodeType() == NodeType.PARFOR )
-		{
-			ParForProgramBlock pb = (ParForProgramBlock) _hlMap.getMappedProg(hlNodeID)[1];
-			OptNode rtNode = _rtMap.getOptNode(pb);
-			
-			//copy node internals (because it might be root node)
-			_tmpChildOld = rtNode.createShallowClone();
-			rtNode.setExecType(newRtNode.getExecType()); //TODO extend as required
-		}
-		else if (hlNode.getNodeType() == NodeType.HOP)
-		{
-			long pid1 = _hlMap.getMappedParentID(hlNode.getID()); //pbID
-			ProgramBlock pb = (ProgramBlock) _hlMap.getMappedProg(pid1)[1];
-			OptNode rtNode1 = _rtMap.getOptNode(pb);
-			long pid2 = _rtMap.getMappedParentID(rtNode1.getID());
-			OptNode rtNode2 = _rtMap.getOptNode(pid2);
-			
-			_tmpParent = rtNode2;
-			_tmpChildOld = rtNode1;		
-			_tmpChildNew = newRtNode;
-			_tmpParent.exchangeChild(_tmpChildOld, _tmpChildNew);
-		}
-		else
-		{
-			throw new DMLRuntimeException("Unexpected node type for plan node exchange.");
-		}
-		
-		return pRoot;
-	}
-	
-	/**
-	 * 
-	 * @param hlNodeID
-	 * @throws DMLRuntimeException
-	 */
-	public static void revertTemporaryChange( long hlNodeID ) 
-		throws DMLRuntimeException 
-	{
-		OptNode node = _hlMap.getOptNode(hlNodeID);
-		
-		if( node.getNodeType() == NodeType.PARFOR )
-		{
-			ParForProgramBlock pb = (ParForProgramBlock) _hlMap.getMappedProg(hlNodeID)[1];
-			OptNode rtNode = _rtMap.getOptNode(pb);
-			rtNode.setExecType(_tmpChildOld.getExecType()); 	
-		}
-		else if( node.getNodeType() == NodeType.HOP )
-		{
-			//revert change (overwrite tmp child)
-			_tmpParent.exchangeChild(_tmpChildNew,_tmpChildOld);	
-		}
-		else
-		{
-			throw new DMLRuntimeException("Unexpected node type for plan node exchange.");
-		}
-		
-		//cleanup
-		_tmpParent = null;
-		_tmpChildOld = null;
-	}
-
-	/**
-	 * 
-	 * @param pRoot
-	 * @param hlNodeID
-	 * @param newRtNode
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
-	public static OptNode exchangePermanently(OptNode pRoot, long hlNodeID, OptNode newRtNode) 
-		throws DMLRuntimeException 
-	{
-		OptNode hlNode = _hlMap.getOptNode(hlNodeID);
-		if( hlNode.getNodeType() == NodeType.PARFOR )
-		{
-			ParForProgramBlock pb = (ParForProgramBlock) _hlMap.getMappedProg(hlNodeID)[1];
-			OptNode rtNode = _rtMap.getOptNode(pb);
-			
-			//copy node internals (because it might be root node)
-			//(no need for update mapping)
-			rtNode.setExecType(newRtNode.getExecType()); //
-		}
-		else if (hlNode.getNodeType() == NodeType.HOP)
-		{
-			long pid1 = _hlMap.getMappedParentID(hlNode.getID()); //pbID
-			ProgramBlock pb = (ProgramBlock) _hlMap.getMappedProg(pid1)[1];
-			OptNode rtNode1 = _rtMap.getOptNode(pb);
-			long pid2 = _rtMap.getMappedParentID(rtNode1.getID());
-			OptNode rtNode2 = _rtMap.getOptNode(pid2);
-			
-			rtNode2.exchangeChild(rtNode1, newRtNode);
-			
-			//finally update mapping (all internal repositories)
-			newRtNode.setID(rtNode1.getID());
-			_rtMap.replaceMapping(pb, newRtNode);
-		}
-		else
-		{
-			throw new DMLRuntimeException("Unexpected node type for plan node exchange.");
-		}
-		
-		return pRoot;
-	}
 
 	public static void clear()
 	{
@@ -1095,10 +858,6 @@ public class OptTreeConverter
 			_hlMap.clear();
 		if( _rtMap != null )
 			_rtMap.clear();
-		
-		_tmpParent = null;
-		_tmpChildOld = null;
-		_tmpChildNew = null;
 	}
 
 }

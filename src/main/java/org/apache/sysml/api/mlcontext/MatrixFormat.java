@@ -34,6 +34,48 @@ public enum MatrixFormat {
 	 * (I J V) format (sparse). I and J represent matrix coordinates and V
 	 * represents the value. The I J and V values are space-separated.
 	 */
-	IJV;
+	IJV,
+
+	/**
+	 * DataFrame of doubles with a row index.
+	 */
+	DF_DOUBLES_WITH_INDEX,
+
+	/**
+	 * DataFrame of doubles with no row index.
+	 */
+	DF_DOUBLES,
+
+	/**
+	 * Vector DataFrame with a row index.
+	 */
+	DF_VECTOR_WITH_INDEX,
+
+	/**
+	 * Vector DataFrame with no row index.
+	 */
+	DF_VECTOR;
+
+	/**
+	 * Is the matrix format vector-based?
+	 * 
+	 * @return {@code true} if matrix is a vector-based DataFrame, {@code false}
+	 *         otherwise.
+	 */
+	public boolean isVectorBased() {
+		return (this == DF_VECTOR_WITH_INDEX
+			|| this == DF_VECTOR);
+	}
+
+	/**
+	 * Does the DataFrame have a row index?
+	 * 
+	 * @return {@code true} if the DataFrame has a row index, {@code false}
+	 *         otherwise.
+	 */
+	public boolean hasIDColumn() {
+		return (this == DF_DOUBLES_WITH_INDEX 
+			|| this == DF_VECTOR_WITH_INDEX);
+	}
 
 }

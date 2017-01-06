@@ -50,6 +50,9 @@ public class WriterBinaryCell extends MatrixWriter
 			
 		//core write
 		writeBinaryCellMatrixToHDFS(path, job, src, rlen, clen, brlen, bclen);
+
+		FileSystem fs = FileSystem.get(job);
+		IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, path);
 	}
 
 	@Override
@@ -68,19 +71,10 @@ public class WriterBinaryCell extends MatrixWriter
 		MatrixCell cell = new MatrixCell(0);
 		writer.append(index, cell);
 		writer.close();
+
+		IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, path);
 	}
 
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @throws IOException
-	 */
 	@SuppressWarnings("deprecation")
 	protected void writeBinaryCellMatrixToHDFS( Path path, JobConf job, MatrixBlock src, long rlen, long clen, int brlen, int bclen )
 		throws IOException

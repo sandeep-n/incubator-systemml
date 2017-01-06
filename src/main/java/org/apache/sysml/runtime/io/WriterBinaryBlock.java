@@ -65,6 +65,8 @@ public class WriterBinaryBlock extends MatrixWriter
 			writeDiagBinaryBlockMatrixToHDFS(path, job, fs, src, rlen, clen, brlen, bclen);
 		else
 			writeBinaryBlockMatrixToHDFS(path, job, fs, src, rlen, clen, brlen, bclen);
+
+		IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, path);
 	}
 
 	@Override
@@ -84,40 +86,17 @@ public class WriterBinaryBlock extends MatrixWriter
 											(int)Math.min(clen, bclen), true);
 		writer.append(index, block);
 		writer.close();
+
+		IOUtilFunctions.deleteCrcFilesFromLocalFileSystem(fs, path);
 	}
-	
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @throws IOException
-	 * @throws DMLRuntimeException 
-	 */
+
 	protected void writeBinaryBlockMatrixToHDFS( Path path, JobConf job, FileSystem fs, MatrixBlock src, long rlen, long clen, int brlen, int bclen )
 		throws IOException, DMLRuntimeException
 	{
 		//sequential write 
 		writeBinaryBlockMatrixToSequenceFile(path, job, fs, src, brlen, bclen, 0, (int)rlen);
 	}
-	
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param fs
-	 * @param src
-	 * @param brlen
-	 * @param bclen
-	 * @param rl
-	 * @param ru
-	 * @throws DMLRuntimeException
-	 * @throws IOException
-	 */
+
 	@SuppressWarnings("deprecation")
 	protected final void writeBinaryBlockMatrixToSequenceFile( Path path, JobConf job, FileSystem fs, MatrixBlock src, int brlen, int bclen, int rl, int ru ) 
 		throws DMLRuntimeException, IOException
@@ -193,20 +172,7 @@ public class WriterBinaryBlock extends MatrixWriter
 			IOUtilFunctions.closeSilently(writer);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @param replication
-	 * @throws IOException
-	 * @throws DMLRuntimeException 
-	 */
+
 	@SuppressWarnings("deprecation")
 	protected final void writeDiagBinaryBlockMatrixToHDFS( Path path, JobConf job, FileSystem fs, MatrixBlock src, long rlen, long clen, int brlen, int bclen ) 
 		throws IOException, DMLRuntimeException
@@ -292,19 +258,6 @@ public class WriterBinaryBlock extends MatrixWriter
 		}
 	}
 
-	/**
-	 * 
-	 * @param path
-	 * @param job
-	 * @param src
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @param pformat
-	 * @throws IOException
-	 * @throws DMLRuntimeException
-	 */
 	@SuppressWarnings("deprecation")
 	public final void writePartitionedBinaryBlockMatrixToHDFS( Path path, JobConf job, MatrixBlock src, long rlen, long clen, int brlen, int bclen, PDataPartitionFormat pformat )
 			throws IOException, DMLRuntimeException

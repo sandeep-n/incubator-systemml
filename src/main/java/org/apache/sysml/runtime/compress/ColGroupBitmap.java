@@ -25,12 +25,14 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
-import java.util.TreeMap;
 import java.util.Map.Entry;
+import java.util.TreeMap;
 
 import org.apache.sysml.runtime.DMLRuntimeException;
-import org.apache.sysml.runtime.compress.utils.LinearAlgebraUtils;
+import org.apache.sysml.runtime.functionobjects.Builtin;
+import org.apache.sysml.runtime.functionobjects.Builtin.BuiltinCode;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysml.runtime.matrix.operators.ScalarOperator;
 
 
@@ -60,9 +62,10 @@ public abstract class ColGroupBitmap extends ColGroup
 	/** Distinct values associated with individual bitmaps. */
 	protected double[] _values; //linearized <numcol vals> <numcol vals>
 
-	/** Bitmaps, one per uncompressed value in {@link #values}. */
+	/** Bitmaps, one per uncompressed value in {@link #_values}. */
 	protected int[] _ptr; //bitmap offsets per value
 	protected char[] _data; //linearized bitmaps (variable length)
+	protected boolean _zeros; //contains zero values
 	
 	protected int[] _skiplist;
 	
@@ -73,6 +76,7 @@ public abstract class ColGroupBitmap extends ColGroup
 	/**
 	 * Main constructor. Stores the headers for the individual bitmaps.
 	 * 
+	 * @param type column type
 	 * @param colIndices
 	 *            indices (within the block) of the columns included in this
 	 *            column
@@ -91,6 +95,8 @@ public abstract class ColGroupBitmap extends ColGroup
 		final int numVals = ubm.getNumValues();
 		
 		_values = new double[numVals*numCols];
+		_zeros = (ubm.getNumOffsets() < numRows);
+		
 		for (int i=0; i<numVals; i++) {
 			//note: deep copied internally on getValues
 			double[] tmp = ubm.getValues(i);
@@ -101,16 +107,19 @@ public abstract class ColGroupBitmap extends ColGroup
 	/**
 	 * Constructor for subclass methods that need to create shallow copies
 	 * 
+	 * @param type compression type
 	 * @param colIndices
 	 *            raw column index information
 	 * @param numRows
 	 *            number of rows in the block
+	 * @param zeros ?
 	 * @param values
 	 *            set of distinct values for the block (associated bitmaps are
 	 *            kept in the subclass)
 	 */
-	protected ColGroupBitmap(CompressionType type, int[] colIndices, int numRows, double[] values) {
+	protected ColGroupBitmap(CompressionType type, int[] colIndices, int numRows, boolean zeros, double[] values) {
 		super(type, colIndices, numRows);
+		_zeros = zeros;
 		_values = values;
 	}
 	
@@ -118,12 +127,6 @@ public abstract class ColGroupBitmap extends ColGroup
 		return _ptr[k+1] - _ptr[k];
 	}
 
-	/**
-	 * 
-	 * @param numVals
-	 * @param totalLen
-	 * @param lbitmaps
-	 */
 	protected void createCompressedBitmaps(int numVals, int totalLen, char[][] lbitmaps)
 	{
 		// compact bitmaps to linearized representation
@@ -291,12 +294,10 @@ public abstract class ColGroupBitmap extends ColGroup
 		}		
 		return 0;
 	}
-	
-	/**
-	 * 
-	 * @param bitmapIx
-	 * @return
-	 */
+
+	public abstract void unaryAggregateOperations(AggregateUnaryOperator op, MatrixBlock result, int rl, int ru)
+		throws DMLRuntimeException;
+
 	protected final double sumValues(int bitmapIx)
 	{
 		final int numCols = getNumCols();
@@ -322,30 +323,19 @@ public abstract class ColGroupBitmap extends ColGroup
 		
 		return val;
 	}
-	
-	/**
-	 * 
-	 * @param b
-	 * @param c
-	 */
-	protected final void sumAllValues(double[] b, double[] c)
+
+	protected final double mxxValues(int bitmapIx, Builtin builtin)
 	{
-		final int numVals = getNumValues();
 		final int numCols = getNumCols();
+		final int valOff = bitmapIx * numCols;
 		
-		//vectMultiplyAdd over cols instead of dotProduct over vals because
-		//usually more values than columns
-		for( int i=0, off=0; i<numCols; i++, off+=numVals )
-			LinearAlgebraUtils.vectMultiplyAdd(b[i], _values, c, off, 0, numVals);
+		double val = Double.MAX_VALUE * ((builtin.getBuiltinCode()==BuiltinCode.MAX)?-1:1);
+		for( int i = 0; i < numCols; i++ )
+			val = builtin.execute2(val, _values[valOff+i]);
+		
+		return val;
 	}
 
-
-	/**
-	 * 
-	 * @param numVals
-	 * @param sb
-	 * @return
-	 */
 	protected final double[] preaggValues(int numVals, double[] b) {
 		double[] ret = new double[numVals];
 		for( int k = 0; k < numVals; k++ )
@@ -361,7 +351,7 @@ public abstract class ColGroupBitmap extends ColGroup
 	 * @param op
 	 *            scalar operation to perform
 	 * @return transformed copy of value metadata for this column group
-	 * @throws DMLRuntimeException
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	protected double[] applyScalarOp(ScalarOperator op)
 			throws DMLRuntimeException 
@@ -374,15 +364,7 @@ public abstract class ColGroupBitmap extends ColGroup
 
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param op
-	 * @param newVal
-	 * @param numCols
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	protected double[] applyScalarOp(ScalarOperator op, double newVal, int numCols)
 			throws DMLRuntimeException 
 	{
@@ -397,8 +379,65 @@ public abstract class ColGroupBitmap extends ColGroup
 		
 		return ret;
 	}
+	
+	/**
+	 * NOTE: Shared across OLE/RLE because value-only computation. 
+	 * 
+	 * @param result matrix block
+	 * @param builtin ?
+	 */
+	protected void computeMxx(MatrixBlock result, Builtin builtin) 
+	{
+		//init and 0-value handling
+		double val = Double.MAX_VALUE * ((builtin.getBuiltinCode()==BuiltinCode.MAX)?-1:1);
+		if( _zeros )
+			val = builtin.execute2(val, 0);
+		
+		//iterate over all values only
+		final int numVals = getNumValues();
+		final int numCols = getNumCols();		
+		for (int k = 0; k < numVals; k++)
+			for( int j=0, valOff = k*numCols; j<numCols; j++ )
+				val = builtin.execute2(val, _values[ valOff+j ]);
+		
+		//compute new partial aggregate
+		val = builtin.execute2(val, result.quickGetValue(0, 0));
+		result.quickSetValue(0, 0, val);
+	}
+	
+	/**
+	 * NOTE: Shared across OLE/RLE because value-only computation. 
+	 * 
+	 * @param result matrix block
+	 * @param builtin ?
+	 */
+	protected void computeColMxx(MatrixBlock result, Builtin builtin)
+	{
+		final int numVals = getNumValues();
+		final int numCols = getNumCols();
+		
+		//init and 0-value handling
+		double[] vals = new double[numCols];
+		Arrays.fill(vals, Double.MAX_VALUE * ((builtin.getBuiltinCode()==BuiltinCode.MAX)?-1:1));
+		if( _zeros ) {
+			for( int j = 0; j < numCols; j++ )
+				vals[j] = builtin.execute2(vals[j], 0);		
+		}
+		
+		//iterate over all values only
+		for (int k = 0; k < numVals; k++) 
+			for( int j=0, valOff=k*numCols; j<numCols; j++ )
+				vals[j] = builtin.execute2(vals[j], _values[ valOff+j ]);
+		
+		//copy results to output
+		for( int j=0; j<numCols; j++ )
+			result.quickSetValue(0, _colIndexes[j], vals[j]);
+	}
+	
 
 	/**
+	 * Obtain number of distrinct sets of values associated with the bitmaps in this column group.
+	 * 
 	 * @return the number of distinct sets of values associated with the bitmaps
 	 *         in this column group
 	 */
@@ -406,18 +445,10 @@ public abstract class ColGroupBitmap extends ColGroup
 		return _values.length / _colIndexes.length;
 	}
 
-	/**
-	 * 
-	 * @return
-	 */
 	public double[] getValues() {
 		return _values;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public char[] getBitmaps() {
 		return _data;
 	}
@@ -426,10 +457,14 @@ public abstract class ColGroupBitmap extends ColGroup
 		return _ptr;
 	}
 
+	public boolean hasZeros() {
+		return _zeros;
+	}
+	
 	/**
-	 * @param bmpIx
+	 * @param k
 	 *            index of a specific compressed bitmap (stored in subclass,
-	 *            index same as {@link #values})
+	 *            index same as {@link #getValues})
 	 * @return an object for iterating over the row offsets in this bitmap. Only
 	 *         valid until the next call to this method. May be reused across
 	 *         calls.
@@ -441,9 +476,9 @@ public abstract class ColGroupBitmap extends ColGroup
 	/**
 	 * Utility function of sparse-unsafe operations.
 	 * 
-	 * @param ind
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param ind ?
+	 * @return offsets
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	protected int[] computeOffsets(boolean[] ind)
 		throws DMLRuntimeException 
@@ -469,6 +504,7 @@ public abstract class ColGroupBitmap extends ColGroup
 		_numRows = in.readInt();
 		int numCols = in.readInt();
 		int numVals = in.readInt();
+		_zeros = in.readBoolean();
 		
 		//read col indices
 		_colIndexes = new int[ numCols ];
@@ -503,6 +539,7 @@ public abstract class ColGroupBitmap extends ColGroup
 		out.writeInt(_numRows);
 		out.writeInt(numCols);
 		out.writeInt(numVals);
+		out.writeBoolean(_zeros);
 		
 		//write col indices
 		for( int i=0; i<_colIndexes.length; i++ )
@@ -528,7 +565,7 @@ public abstract class ColGroupBitmap extends ColGroup
 
 	@Override
 	public long getExactSizeOnDisk() {
-		long ret = 12; //header
+		long ret = 13; //header
 		//col indices
 		ret += 4 * _colIndexes.length; 
 		//distinct values (groups of values)

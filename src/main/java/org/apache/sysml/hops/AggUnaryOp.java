@@ -19,6 +19,7 @@
 
 package org.apache.sysml.hops;
 
+import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.AggBinaryOp.SparkAggType;
 import org.apache.sysml.hops.Hop.MultiThreadedHop;
@@ -143,6 +144,13 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 				}				
 				else { //general case		
 					int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
+					if(DMLScript.USE_ACCELERATOR && (DMLScript.FORCE_ACCELERATOR || getMemEstimate() < OptimizerUtils.GPU_MEMORY_BUDGET) && (_op == AggOp.SUM)) {
+						// Only implemented methods for GPU
+						if (_op == AggOp.SUM && (_direction == Direction.RowCol || _direction == Direction.Row || _direction == Direction.Col)){
+							et = ExecType.GPU;
+							k = 1;
+						}
+					}
 					agg1 = new PartialAggregate(input.constructLops(), 
 							HopsAgg2Lops.get(_op), HopsDirection2Lops.get(_direction), getDataType(),getValueType(), et, k);
 				}
@@ -448,13 +456,7 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 		
 		return _etype;
 	}
-	
-	/**
-	 * 
-	 * @param input
-	 * @param dir
-	 * @return
-	 */
+
 	private boolean requiresAggregation( Hop input, Direction dir ) 
 	{
 		if( !ALLOW_UNARYAGG_WO_FINAL_AGG )
@@ -466,13 +468,7 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 	
 		return !noAggRequired;
 	}
-	
 
-	/**
-	 * 
-	 * @param agg
-	 * @return
-	 */
 	private SparkAggType getSparkUnaryAggregationType( boolean agg )
 	{
 		if( !agg )
@@ -484,12 +480,8 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 		else
 			return SparkAggType.MULTI_BLOCK;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
-	private boolean isTernaryAggregateRewriteApplicable() 
+
+	private boolean isTernaryAggregateRewriteApplicable() throws HopsException 
 	{
 		boolean ret = false;
 		
@@ -500,7 +492,9 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 		{
 			Hop input1 = getInput().get(0);
 			if( input1.getParent().size() == 1 && //sum single consumer
-				input1 instanceof BinaryOp && ((BinaryOp)input1).getOp()==OpOp2.MULT )
+				input1 instanceof BinaryOp && ((BinaryOp)input1).getOp()==OpOp2.MULT
+				// As unary agg instruction is not implemented in MR and since MR is in maintenance mode, postponed it.
+				&& input1.optFindExecType() != ExecType.MR) 
 			{
 				Hop input11 = input1.getInput().get(0);
 				Hop input12 = input1.getInput().get(1);
@@ -533,11 +527,7 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 			|| opOp2 == OpOp2.GREATER || opOp2 == OpOp2.GREATEREQUAL
 			|| opOp2 == OpOp2.EQUAL || opOp2 == OpOp2.NOTEQUAL);
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	private boolean isUnaryAggregateOuterRewriteApplicable() 
 	{
 		boolean ret = false;
@@ -573,7 +563,7 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 	
 	/**
 	 * This will check if there is sufficient memory locally (twice the size of second matrix, for original and sort data), and remotely (size of second matrix (sorted data)).  
-	 * @return
+	 * @return true if sufficient memory
 	 */
 	private boolean isUnaryAggregateOuterSPRewriteApplicable() 
 	{
@@ -620,7 +610,7 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 	 * It needs to be Outer, aggregator type SUM, RowIndexMin, RowIndexMax and 6 operators <, <=, >, >=, == and !=
 	 *   
 	 *   
-	 * @return
+	 * @return true if unary aggregate outer
 	 */
 	private boolean isUnaryAggregateOuterCPRewriteApplicable() 
 	{
@@ -634,14 +624,7 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 
 		return ret;
 	}
-	
-	
-	/**
-	 * 
-	 * @return
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
+
 	private Lop constructLopsTernaryAggregateRewrite(ExecType et) 
 		throws HopsException, LopsException
 	{
@@ -675,8 +658,11 @@ public class AggUnaryOp extends Hop implements MultiThreadedHop
 
 		//create new ternary aggregate operator 
 		int k = OptimizerUtils.getConstrainedNumThreads( _maxNumThreads );
+		// The execution type of a unary aggregate instruction should depend on the execution type of inputs to avoid OOM
+		// Since we only support matrix-vector and not vector-matrix, checking the execution type of input1 should suffice.
+		ExecType et_input = input1.optFindExecType();
 		ret = new TernaryAggregate(in1, in2, in3, Aggregate.OperationTypes.KahanSum, 
-				Binary.OperationTypes.MULTIPLY, DataType.SCALAR, ValueType.DOUBLE, et, k);
+				Binary.OperationTypes.MULTIPLY, DataType.SCALAR, ValueType.DOUBLE, et_input, k);
 		
 		return ret;
 	}

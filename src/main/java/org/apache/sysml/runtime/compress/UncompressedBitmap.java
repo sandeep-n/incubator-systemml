@@ -73,8 +73,10 @@ public final class UncompressedBitmap
 	public int getNumColumns() {
 		return _numCols;
 	}
-
+	
 	/**
+	 * Obtain tuple of column values associated with index.
+	 * 
 	 * @param ix   index of a particular distinct value
 	 * @return the tuple of column values associated with the specified index
 	 */
@@ -83,6 +85,8 @@ public final class UncompressedBitmap
 	}
 
 	/**
+	 * Obtain number of distinct values in the column.
+	 * 
 	 * @return number of distinct values in the column; this number is also the
 	 *         number of bitmaps, since there is one bitmap per value
 	 */
@@ -91,11 +95,20 @@ public final class UncompressedBitmap
 	}
 
 	/**
+	 * Obtain array of offsets of the rows containing index value
+	 * 
 	 * @param ix   index of a particular distinct value
 	 * @return IMMUTABLE array of the offsets of the rows containing the value
 	 *         with the indicated index
 	 */
 	public int[] getOffsetsList(int ix) {
 		return _offsetsLists[ix];
+	}
+
+	public int getNumOffsets() {
+		int ret = 0;
+		for( int[] offlist : _offsetsLists )
+			ret += offlist.length;
+		return ret;
 	}
 }

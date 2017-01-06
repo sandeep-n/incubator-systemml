@@ -67,11 +67,7 @@ public class DMLProgram
 	public HashMap<String,DMLProgram> getNamespaces(){
 		return _namespaces;
 	}
-	
-	public void addStatementBlock(StatementBlock b, int pos) {
-		_blocks.add(pos,b) ;
-	}
-	
+
 	public void addStatementBlock(StatementBlock b){
 		_blocks.add(b);
 	}
@@ -84,7 +80,7 @@ public class DMLProgram
 	 * 
 	 * @param fkey   function key as concatenation of namespace and function name 
 	 *               (see DMLProgram.constructFunctionKey)
-	 * @return
+	 * @return function statement block
 	 */
 	public FunctionStatementBlock getFunctionStatementBlock(String fkey) {
 		String[] tmp = splitFunctionKey(fkey);
@@ -142,10 +138,6 @@ public class DMLProgram
 	
 	public StatementBlock getStatementBlock(int i){
 		return _blocks.get(i);
-	}
-	
-	public void setStatementBlock(int i, StatementBlock sb) {
-		 _blocks.set(i, sb);
 	}
 
 	public void mergeStatementBlocks(){
@@ -212,16 +204,6 @@ public class DMLProgram
 		return rtprog ;
 	}
 	
-	/**
-	 * 
-	 * @param prog
-	 * @param sb
-	 * @param config
-	 * @return
-	 * @throws IOException
-	 * @throws LopsException
-	 * @throws DMLRuntimeException
-	 */
 	public ProgramBlock createRuntimeProgramBlock(Program prog, StatementBlock sb, DMLConfig config) 
 		throws IOException, LopsException, DMLRuntimeException 
 	{
@@ -667,9 +649,9 @@ public class DMLProgram
 	 * Determines if the given program block includes a RMVAR or RMFILEVAR
 	 * instruction for the given varName.
 	 * 
-	 * @param pb
-	 * @param varName
-	 * @return
+	 * @param pb program block
+	 * @param varName variable name
+	 * @return true if program block contains remove instruction for variable
 	 */
 	private boolean rContainsRMInstruction(ProgramBlock pb, String varName)
 	{	
@@ -724,9 +706,9 @@ public class DMLProgram
 	 * the list of instructions, while for complex program blocks it is added to
 	 * the end of the list of exit instructions.
 	 * 
-	 * @param pb
-	 * @param inst
-	 * @throws DMLRuntimeException 
+	 * @param pb program block
+	 * @param inst instruction
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	private void addCleanupInstruction( ProgramBlock pb, Instruction inst ) 
 		throws DMLRuntimeException
@@ -767,22 +749,11 @@ public class DMLProgram
 		}
 	}
 	
-	/**
-	 * 
-	 * @param fnamespace
-	 * @param fname
-	 * @return
-	 */
 	public static String constructFunctionKey(String fnamespace, String fname)
 	{
 		return fnamespace + Program.KEY_DELIM + fname;
 	}
 	
-	/**
-	 * 
-	 * @param fkey
-	 * @return
-	 */
 	public static String[] splitFunctionKey(String fkey)
 	{
 		return fkey.split(Program.KEY_DELIM);

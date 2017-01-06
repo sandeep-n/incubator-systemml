@@ -78,6 +78,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		PMAPMM,   //partitioned map-side matrix-matrix multiplication (sp)
 		PMM,      //permutation matrix multiplication using distributed cache, for left input (mr/cp)
 		TSMM,     //transpose-self matrix multiplication (cp/mr/sp)
+		TSMM2,    //transpose-self matrix multiplication, 2-pass w/o shuffle (sp)
 		ZIPMM,    //zip matrix multiplication (sp)
 		MM        //in-memory matrix multiplication (cp)
 	};
@@ -200,7 +201,8 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 				switch( _method )
 				{
 					case TSMM:
-						constructSparkLopsTSMM( mmtsj );
+					case TSMM2:	
+						constructSparkLopsTSMM( mmtsj, _method==MMultMethod.TSMM2 );
 						break;
 					case MAPMM_L:
 					case MAPMM_R:
@@ -356,7 +358,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		
 		//account for potential final dense-sparse transformation (worst-case sparse representation)
 		if( dim2 >= 2 ) //vectors always dense
-			ret = OptimizerUtils.estimateSizeExactSparsity(dim1, dim2, MatrixBlock.SPARSITY_TURN_POINT);
+			ret = OptimizerUtils.estimateSizeExactSparsity(dim1, dim2, MatrixBlock.getSparsityTurnPoint());
 		
 		return ret;
 	}
@@ -461,7 +463,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 	 * TSMM: Determine if XtX pattern applies for this aggbinary and if yes
 	 * which type. 
 	 * 
-	 * @return
+	 * @return MMTSJType
 	 */
 	public MMTSJType checkTransposeSelf()
 	{
@@ -491,7 +493,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 	 * MapMultChain: Determine if XtwXv/XtXv pattern applies for this aggbinary 
 	 * and if yes which type. 
 	 * 
-	 * @return
+	 * @return ChainType
 	 */
 	public ChainType checkMapMultChain()
 	{
@@ -545,38 +547,24 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 	// CP Lops generation
 	/////////////////////////
 	
-	/**
-	 * 
-	 * @param mmtsj
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
 	private void constructCPLopsTSMM( MMTSJType mmtsj ) 
 		throws HopsException, LopsException
 	{
 		int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
 		
 		ExecType et = ExecType.CP;
-//		if(DMLScript.USE_ACCELERATOR && (DMLScript.FORCE_ACCELERATOR || getMemEstimate() < OptimizerUtils.GPU_MEMORY_BUDGET)) {
-		//TODO: Fix me. Currently forcing the instruction to GPU if gpu flag is set
-		if(DMLScript.USE_ACCELERATOR) {
+		if(DMLScript.USE_ACCELERATOR && (DMLScript.FORCE_ACCELERATOR || getMemEstimate() < OptimizerUtils.GPU_MEMORY_BUDGET)) {
 			et = ExecType.GPU;
 		}
 		
 		Lop matmultCP = new MMTSJ(getInput().get(mmtsj.isLeft()?1:0).constructLops(),
-				                 getDataType(), getValueType(), et, mmtsj, k);
+				                 getDataType(), getValueType(), et, mmtsj, false, k);
 	
 		matmultCP.getOutputParameters().setDimensions(getDim1(), getDim2(), getRowsInBlock(), getColsInBlock(), getNnz());
 		setLineNumbers( matmultCP );
 		setLops(matmultCP);
 	}
-	
-	/**
-	 * 
-	 * @param chain
-	 * @throws LopsException
-	 * @throws HopsException
-	 */
+
 	private void constructCPLopsMMChain( ChainType chain ) 
 		throws LopsException, HopsException
 	{
@@ -610,8 +598,8 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 	 * but matrix mult on small output might be scheduled to CP. Hence, we 
 	 * need to handle directly passed selection vectors in CP as well.
 	 * 
-	 * @throws HopsException
-	 * @throws LopsException
+	 * @throws HopsException if HopsException occurs
+	 * @throws LopsException if LopsException occurs
 	 */
 	private void constructCPLopsPMM() 
 		throws HopsException, LopsException
@@ -639,11 +627,6 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		HopRewriteUtils.removeChildReference(pmInput, nrow);
 	}
 
-	/**
-	 * 
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
 	private void constructCPLopsMM() 
 		throws HopsException, LopsException
 	{	
@@ -692,12 +675,6 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		setLops(matmultCP);
 	}
 
-	/**
-	 * 
-	 * @return
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
 	private Lop constructCPLopsMMWithLeftTransposeRewrite() 
 		throws HopsException, LopsException
 	{
@@ -728,28 +705,17 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 	// Spark Lops generation
 	/////////////////////////
 
-	/**
-	 * 
-	 * @param mmtsj
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
-	private void constructSparkLopsTSMM(MMTSJType mmtsj) 
+	private void constructSparkLopsTSMM(MMTSJType mmtsj, boolean multiPass) 
 		throws HopsException, LopsException
 	{
 		Hop input = getInput().get(mmtsj.isLeft()?1:0);
-		MMTSJ tsmm = new MMTSJ(input.constructLops(), getDataType(), getValueType(), ExecType.SPARK, mmtsj);
+		MMTSJ tsmm = new MMTSJ(input.constructLops(), getDataType(), 
+				getValueType(), ExecType.SPARK, mmtsj, multiPass);
 		setOutputDimensions(tsmm);
 		setLineNumbers(tsmm);
 		setLops(tsmm);
 	}
-	
-	/**
-	 * 
-	 * @param method
-	 * @throws LopsException
-	 * @throws HopsException
-	 */
+
 	private void constructSparkLopsMapMM(MMultMethod method) 
 		throws LopsException, HopsException
 	{
@@ -775,13 +741,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		setLineNumbers(mapmult);
 		setLops(mapmult);	
 	}
-	
-	/**
-	 * 
-	 * @return
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
+
 	private Lop constructSparkLopsMapMMWithLeftTransposeRewrite() 
 		throws HopsException, LopsException
 	{
@@ -808,13 +768,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		
 		return out;
 	}
-	
-	/**
-	 * 
-	 * @param chain
-	 * @throws HopsException 
-	 * @throws LopsException 
-	 */
+
 	private void constructSparkLopsMapMMChain(ChainType chain) 
 		throws LopsException, HopsException
 	{
@@ -836,12 +790,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		setLineNumbers(mapmmchain);
 		setLops(mapmmchain);
 	}
-	
-	/**
-	 * 
-	 * @throws LopsException
-	 * @throws HopsException
-	 */
+
 	private void constructSparkLopsPMapMM() 
 		throws LopsException, HopsException
 	{
@@ -853,12 +802,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		setLineNumbers(pmapmult);
 		setLops(pmapmult);
 	}
-	
-	/**
-	 * 
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
+
 	private void constructSparkLopsCPMM() 
 		throws HopsException, LopsException
 	{
@@ -877,14 +821,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			setLops( cpmm );
 		}
 	}
-	
 
-	/**
-	 * 
-	 * @return
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
 	private Lop constructSparkLopsCPMMWithLeftTransposeRewrite() 
 		throws HopsException, LopsException
 	{
@@ -909,13 +846,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		
 		return out;
 	}
-	
-	/**
-	 * 
-	 * @param chain
-	 * @throws LopsException
-	 * @throws HopsException
-	 */
+
 	private void constructSparkLopsRMM() 
 		throws LopsException, HopsException
 	{
@@ -925,12 +856,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		setLineNumbers( rmm );
 		setLops(rmm);
 	}
-	
-	/**
-	 * 
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
+
 	private void constructSparkLopsPMM() 
 		throws HopsException, LopsException
 	{
@@ -1004,11 +930,6 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		HopRewriteUtils.removeChildReference(pmInput, nrow);		
 	} 
 
-	/**
-	 * 
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
 	private void constructSparkLopsZIPMM() 
 		throws HopsException, LopsException
 	{
@@ -1032,13 +953,6 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 	// MR Lops generation
 	/////////////////////////
 
-	
-	/**
-	 * 
-	 * @param method
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
 	private void constructMRLopsMapMM(MMultMethod method) 
 		throws HopsException, LopsException
 	{
@@ -1103,14 +1017,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			}
 		}	
 	} 
-	
-	
-	/**
-	 * 
-	 * @return
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
+
 	private Lop constructMRLopsMapMMWithLeftTransposeRewrite() 
 		throws HopsException, LopsException
 	{
@@ -1168,13 +1075,6 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		return out;
 	}
 
-	
-	/**
-	 * 
-	 * @param chainType
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
 	private void constructMRLopsMapMMChain( ChainType chainType ) 
 		throws HopsException, LopsException
 	{
@@ -1227,12 +1127,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		 
 		setLops(agg1);
 	} 
-	
-	/**
-	 * 
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
+
 	private void constructMRLopsCPMM() 
 		throws HopsException, LopsException
 	{
@@ -1264,13 +1159,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			setLops(agg1);
 		}
 	} 
-	
-	/**
-	 * 
-	 * @return
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
+
 	private Lop constructMRLopsCPMMWithLeftTransposeRewrite() 
 		throws HopsException, LopsException
 	{
@@ -1306,12 +1195,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		
 		return out;
 	}
-	
-	/**
-	 * 
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
+
 	private void constructMRLopsRMM() 
 		throws HopsException, LopsException
 	{
@@ -1322,13 +1206,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		setLineNumbers(rmm);
 		setLops(rmm);
 	} 
-	
-	/**
-	 * 
-	 * @param mmtsj
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
+
 	private void constructMRLopsTSMM(MMTSJType mmtsj) 
 		throws HopsException, LopsException
 	{
@@ -1345,12 +1223,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		
 		setLops(agg1);
 	} 
-	
-	/**
-	 * 
-	 * @throws HopsException
-	 * @throws LopsException
-	 */
+
 	private void constructMRLopsPMM() 
 		throws HopsException, LopsException
 	{
@@ -1442,7 +1315,9 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 	 * this has huge impact, because the transpose of X would dominate
 	 * the entire operation costs.
 	 * 
-	 * @return
+	 * @param CP true if CP
+	 * @param checkMemMR true if check MR memory
+	 * @return true if left transpose rewrite applicable
 	 */
 	private boolean isLeftTransposeRewriteApplicable(boolean CP, boolean checkMemMR)
 	{
@@ -1512,13 +1387,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param X
-	 * @param Y
-	 * @return
-	 */
+
 	private MMCJType getMMCJAggregationType(Hop X, Hop Y)
 	{
 		//choose quickpath (no aggregation) if the aggregation buffer likely has to spill and the smaller block fits
@@ -1532,11 +1401,6 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			   ? MMCJType.NO_AGG : MMCJType.AGG ;
 	}
 
-	/**
-	 * 
-	 * @param agg
-	 * @return
-	 */
 	private SparkAggType getSparkMMAggregationType( boolean agg )
 	{
 		if( !agg )
@@ -1547,12 +1411,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		else
 			return SparkAggType.MULTI_BLOCK;
 	}
-	
-	/**
-	 * 
-	 * @param method
-	 * @return
-	 */
+
 	private boolean requiresAggregation(MMultMethod method) 
 	{
 		//worst-case assumption (for plan correctness)
@@ -1574,12 +1433,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
         
         return ret;
 	}
-	
-	/**
-	 * 
-	 * @param method
-	 * @return
-	 */
+
 	private boolean requiresPartitioning(MMultMethod method, boolean rewrite) 
 	{
 		boolean ret = true; //worst-case
@@ -1610,7 +1464,21 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 	/**
 	 * Estimates the memory footprint of MapMult operation depending on which input is put into distributed cache.
 	 * This function is called by <code>optFindMMultMethod()</code> to decide the execution strategy, as well as by 
-	 * piggybacking to decide the number of Map-side instructions to put into a single GMR job. 
+	 * piggybacking to decide the number of Map-side instructions to put into a single GMR job.
+	 * 
+	 * @param m1_rows m1 rows
+	 * @param m1_cols m1 cols
+	 * @param m1_rpb m1 rows per block
+	 * @param m1_cpb m1 cols per block
+	 * @param m1_nnz m1 num non-zeros
+	 * @param m2_rows m2 rows
+	 * @param m2_cols m2 cols
+	 * @param m2_rpb m2 rows per block
+	 * @param m2_cpb m2 cols per block
+	 * @param m2_nnz m2 num non-zeros
+	 * @param cachedInputIndex true if cached input index
+	 * @param pmm true if permutation matrix multiply
+	 * @return map mm memory estimate
 	 */
 	public static double getMapmmMemEstimate(long m1_rows, long m1_cols, long m1_rpb, long m1_cpb, long m1_nnz,
 			long m2_rows, long m2_cols, long m2_rpb, long m2_cpb, long m2_nnz, int cachedInputIndex, boolean pmm) 
@@ -1651,7 +1519,22 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 	/**
 	 * Optimization that chooses between two methods to perform matrix multiplication on map-reduce.
 	 * 
-	 * More details on the cost-model used: refer ICDE 2011 paper. 
+	 * More details on the cost-model used: refer ICDE 2011 paper.
+	 * 
+	 * @param m1_rows m1 rows
+	 * @param m1_cols m1 cols
+	 * @param m1_rpb m1 rows per block
+	 * @param m1_cpb m1 cols per block
+	 * @param m1_nnz m1 num non-zeros
+	 * @param m2_rows m2 rows
+	 * @param m2_cols m2 cols
+	 * @param m2_rpb m2 rows per block
+	 * @param m2_cpb m2 cols per block
+	 * @param m2_nnz m2 num non-zeros
+	 * @param mmtsj the MMTSJType
+	 * @param chainType the chain type
+	 * @param leftPMInput the left pm input
+	 * @return the MMultMethod
 	 */
 	private static MMultMethod optFindMMultMethodMR ( long m1_rows, long m1_cols, long m1_rpb, long m1_cpb, long m1_nnz,
 			                                        long m2_rows, long m2_cols, long m2_rpb, long m2_cpb, long m2_nnz,
@@ -1748,16 +1631,6 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			return MMultMethod.RMM;
 	}
 
-	/**
-	 * 
-	 * @param m1_rows
-	 * @param m1_cols
-	 * @param m2_rows
-	 * @param m2_cols
-	 * @param mmtsj
-	 * @param chainType
-	 * @return
-	 */
 	private static MMultMethod optFindMMultMethodCP( long m1_rows, long m1_cols, long m2_rows, long m2_cols, MMTSJType mmtsj, ChainType chainType, boolean leftPM ) 
 	{	
 		//step 1: check for TSMM pattern
@@ -1776,20 +1649,6 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		return MMultMethod.MM; 
 	}
 	
-	/**
-	 * 
-	 * @param m1_rows
-	 * @param m1_cols
-	 * @param m1_rpb
-	 * @param m1_cpb
-	 * @param m2_rows
-	 * @param m2_cols
-	 * @param m2_rpb
-	 * @param m2_cpb
-	 * @param mmtsj
-	 * @param chainType
-	 * @return
-	 */
 	private MMultMethod optFindMMultMethodSpark( long m1_rows, long m1_cols, long m1_rpb, long m1_cpb, long m1_nnz, 
             long m2_rows, long m2_cols, long m2_rpb, long m2_cpb, long m2_nnz,
             MMTSJType mmtsj, ChainType chainType, boolean leftPMInput, boolean tmmRewrite ) 
@@ -1886,13 +1745,30 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			}
 		}
 		
-		// Step 5: check for unknowns
+		// Step 5: check for TSMM2 (2 pass w/o suffle, preferred over CPMM/RMM)
+		if( mmtsj != MMTSJType.NONE && m1_rows >=0 && m1_cols>=0 
+			&& m2_rows >= 0 && m2_cols>=0 )
+		{
+			double mSize = (mmtsj == MMTSJType.LEFT) ? 
+					OptimizerUtils.estimateSizeExactSparsity(m2_rows, m2_cols-m2_cpb, 1.0) : 
+					OptimizerUtils.estimateSizeExactSparsity(m1_rows-m1_rpb, m1_cols, 1.0);	
+			double mSizeP = (mmtsj == MMTSJType.LEFT) ? 
+					OptimizerUtils.estimatePartitionedSizeExactSparsity(m2_rows, m2_cols-m2_cpb, m2_rpb, m2_cpb, 1.0) : 
+					OptimizerUtils.estimatePartitionedSizeExactSparsity(m1_rows-m1_rpb, m1_cols, m1_rpb, m1_cpb, 1.0); 
+			if( mSizeP < memBudgetExec && mSize+mSizeP < memBudgetLocal 
+				&& ((mmtsj == MMTSJType.LEFT) ? m2_cols<=2*m2_cpb : m1_rows<=2*m1_rpb) //4 output blocks
+				&& mSizeP < 2L*1024*1024*1024) { //2GB limitation as single broadcast
+				return MMultMethod.TSMM2;
+			}
+		}
+		
+		// Step 6: check for unknowns
 		// If the dimensions are unknown at compilation time, simply assume 
 		// the worst-case scenario and produce the most robust plan -- which is CPMM
 		if ( m1_rows == -1 || m1_cols == -1 || m2_rows == -1 || m2_cols == -1 )
 			return MMultMethod.CPMM;
 
-		// Step 6: check for ZIPMM
+		// Step 7: check for ZIPMM
 		// If t(X)%*%y -> t(t(y)%*%X) rewrite and ncol(X)<blocksize
 		if( tmmRewrite && m1_rows >= 0 && m1_rows <= m1_rpb  //blocksize constraint left
 			&& m2_cols >= 0 && m2_cols <= m2_cpb )           //blocksize constraint right	
@@ -1900,7 +1776,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			return MMultMethod.ZIPMM;
 		}
 			
-		// Step 7: Decide CPMM vs RMM based on io costs
+		// Step 8: Decide CPMM vs RMM based on io costs
 		//estimate shuffle costs weighted by parallelism
 		//TODO currently we reuse the mr estimates, these need to be fine-tune for our spark operators
 		double rmm_costs = getRMMCostEstimate(m1_rows, m1_cols, m1_rpb, m1_cpb, m2_rows, m2_cols, m2_rpb, m2_cpb);
@@ -1913,18 +1789,6 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 			return MMultMethod.RMM;
 	}
 
-	/**
-	 * 
-	 * @param m1_rows
-	 * @param m1_cols
-	 * @param m1_rpb
-	 * @param m1_cpb
-	 * @param m2_rows
-	 * @param m2_cols
-	 * @param m2_rpb
-	 * @param m2_cpb
-	 * @return
-	 */
 	private static double getRMMCostEstimate( long m1_rows, long m1_cols, long m1_rpb, long m1_cpb, 
 			long m2_rows, long m2_cols, long m2_rpb, long m2_cpb )
 	{
@@ -1950,19 +1814,7 @@ public class AggBinaryOp extends Hop implements MultiThreadedHop
 		// return total costs
 		return rmm_costs;
 	}
-	
-	/**
-	 * 
-	 * @param m1_rows
-	 * @param m1_cols
-	 * @param m1_rpb
-	 * @param m1_cpb
-	 * @param m2_rows
-	 * @param m2_cols
-	 * @param m2_rpb
-	 * @param m2_cpb
-	 * @return
-	 */
+
 	private static double getCPMMCostEstimate( long m1_rows, long m1_cols, long m1_rpb, long m1_cpb, 
             long m2_rows, long m2_cols, long m2_rpb, long m2_cpb )
 	{

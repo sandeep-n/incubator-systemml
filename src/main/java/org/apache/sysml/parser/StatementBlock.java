@@ -91,24 +91,7 @@ public class StatementBlock extends LiveVariableAnalysis
 		this._endColumn		= s.getEndColumn();
 		
 	}
-	
-	/**
-	 * replace statement 
-	 */
-	public void replaceStatement(int index, Statement passedStmt){
-		this._statements.set(index, passedStmt);
-		
-		if (index == 0){
-			this._beginLine 	= passedStmt.getBeginLine(); 
-			this._beginColumn 	= passedStmt.getBeginColumn();
-		}
-		
-		else if (index == this._statements.size() -1){
-			this._endLine 		= passedStmt.getEndLine();
-			this._endColumn		= passedStmt.getEndColumn();	
-		}
-	}
-	
+
 	public void addStatementBlock(StatementBlock s){
 		for (int i = 0; i < s.getNumStatements(); i++){
 			_statements.add(s.getStatement(i));
@@ -246,12 +229,6 @@ public class StatementBlock extends LiveVariableAnalysis
 	}
    
 
-    /**
-     * 
-     * @param fblock
-     * @param prog
-     * @return
-     */
     private boolean rIsInlineableFunction( FunctionStatementBlock fblock, DMLProgram prog )
     {
     	boolean ret = true;
@@ -533,17 +510,6 @@ public class StatementBlock extends LiveVariableAnalysis
 		return newStatements;
 	}
 	
-	/**
-	 * 
-	 * @param dmlProg
-	 * @param ids
-	 * @param constVars
-	 * @param conditional
-	 * @return
-	 * @throws LanguageException
-	 * @throws ParseException
-	 * @throws IOException
-	 */
 	public VariableSet validate(DMLProgram dmlProg, VariableSet ids, HashMap<String, ConstIdentifier> constVars, boolean conditional) 
 		throws LanguageException, ParseException, IOException 
 	{
@@ -628,9 +594,11 @@ public class StatementBlock extends LiveVariableAnalysis
 						}
 						IntIdentifier intid = null;
 						if (bife.getOpCode() == Expression.BuiltinFunctionOp.NROW){
-							intid = new IntIdentifier(currVal.getDim1(), bife.getFilename(), bife.getBeginLine(), bife.getBeginColumn(), bife.getEndLine(), bife.getEndColumn());
+							intid = new IntIdentifier((currVal instanceof IndexedIdentifier)?((IndexedIdentifier)currVal).getOrigDim1():currVal.getDim1(), 
+									bife.getFilename(), bife.getBeginLine(), bife.getBeginColumn(), bife.getEndLine(), bife.getEndColumn());
 						} else {
-							intid = new IntIdentifier(currVal.getDim2(), bife.getFilename(), bife.getBeginLine(), bife.getBeginColumn(), bife.getEndLine(), bife.getEndColumn());
+							intid = new IntIdentifier((currVal instanceof IndexedIdentifier)?((IndexedIdentifier)currVal).getOrigDim2():currVal.getDim2(), 
+									bife.getFilename(), bife.getBeginLine(), bife.getBeginColumn(), bife.getEndLine(), bife.getEndColumn());
 						}
 						
 						// handle case when nrow / ncol called on variable with size unknown (dims == -1) 
@@ -969,25 +937,12 @@ public class StatementBlock extends LiveVariableAnalysis
 	///////////////////////////////////////////////////////////////
 	// validate error handling (consistent for all expressions)
 	
-	/**
-	* 
-	* @param msg
-	* @param conditional
-	* @throws LanguageException
-	*/
 	public void raiseValidateError( String msg, boolean conditional ) 
 		throws LanguageException
 	{
 		raiseValidateError(msg, conditional, null);
 	}
 	
-	/**
-	* 
-	* @param msg
-	* @param conditional
-	* @param code
-	* @throws LanguageException
-	*/
 	public void raiseValidateError( String msg, boolean conditional, String errorCode ) 
 		throws LanguageException
 	{

@@ -30,41 +30,17 @@ import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
-import org.apache.sysml.runtime.functionobjects.OffsetColumnIndex;
-import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.instructions.spark.data.LazyIterableIterator;
 import org.apache.sysml.runtime.instructions.spark.data.PartitionedBroadcast;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.operators.Operator;
-import org.apache.sysml.runtime.matrix.operators.ReorgOperator;
 
 public class FrameAppendMSPInstruction extends AppendMSPInstruction
 {
 	public FrameAppendMSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand offset, CPOperand out, boolean cbind, String opcode, String istr)
 	{
 		super(op, in1, in2, offset, out, cbind, opcode, istr);
-	}
-	
-	public static FrameAppendMSPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
-		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
-		InstructionUtils.checkNumFields (parts, 5);
-		
-		String opcode = parts[0];
-		CPOperand in1 = new CPOperand(parts[1]);
-		CPOperand in2 = new CPOperand(parts[2]);
-		CPOperand offset = new CPOperand(parts[3]);
-		CPOperand out = new CPOperand(parts[4]);
-		boolean cbind = Boolean.parseBoolean(parts[5]);
-		
-		if(!opcode.equalsIgnoreCase("mappend"))
-			throw new DMLRuntimeException("Unknown opcode while parsing a FrameAppendMSPInstruction: " + str);
-		
-		return new FrameAppendMSPInstruction(
-				new ReorgOperator(OffsetColumnIndex.getOffsetColumnIndexFnObject(-1)), 
-				in1, in2, offset, out, cbind, opcode, str);
 	}
 	
 	@Override
@@ -92,23 +68,20 @@ public class FrameAppendMSPInstruction extends AppendMSPInstruction
 		sec.setRDDHandleForVariable(output.getName(), out);
 		sec.addLineageRDD(output.getName(), input1.getName());
 		sec.addLineageBroadcast(output.getName(), input2.getName());
+		
+		//update schema of output with merged input schemas
+		sec.getFrameObject(output.getName()).setSchema(
+			sec.getFrameObject(input1.getName()).mergeSchemas(
+			sec.getFrameObject(input2.getName())));
 	}
-	
-	/** 
-	 * 
-	 * @param cbind
-	 * @return
-	 */
+
 	private boolean preservesPartitioning( boolean cbind )
 	{
 		//Partitions for input1 will be preserved in case of cbind, 
 		// where as in case of rbind partitions will not be preserved.
 		return cbind;
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class MapSideAppendPartitionFunction implements  PairFlatMapFunction<Iterator<Tuple2<Long,FrameBlock>>, Long, FrameBlock> 
 	{
 		private static final long serialVersionUID = -3997051891171313830L;
@@ -121,7 +94,7 @@ public class FrameAppendMSPInstruction extends AppendMSPInstruction
 		}
 
 		@Override
-		public Iterable<Tuple2<Long, FrameBlock>> call(Iterator<Tuple2<Long, FrameBlock>> arg0)
+		public LazyIterableIterator<Tuple2<Long, FrameBlock>> call(Iterator<Tuple2<Long, FrameBlock>> arg0)
 			throws Exception 
 		{
 			return new MapAppendPartitionIterator(arg0);

@@ -25,7 +25,7 @@
 		<version>18</version>
 	</parent>
 	<groupId>org.apache.systemml</groupId>
-	<version>0.11.0-incubating-SNAPSHOT</version>
+	<version>0.12.0-incubating-SNAPSHOT</version>
 	<artifactId>systemml</artifactId>
 	<packaging>jar</packaging>
 	<name>SystemML</name>
@@ -64,11 +64,13 @@
 
 	<properties>
 		<hadoop.version>2.4.1</hadoop.version>
-		<antlr.version>4.3</antlr.version>
-		<spark.version>1.4.1</spark.version>
-		<scala.version>2.11.8</scala.version>
-		<scala.binary.version>2.11</scala.binary.version>
+		<antlr.version>4.5.3</antlr.version>
+		<spark.version>1.6.0</spark.version>
+		<scala.version>2.10.5</scala.version>
+		<scala.binary.version>2.10</scala.binary.version>
 		<scala.test.version>2.2.6</scala.test.version>
+		<maven.build.timestamp.format>yyyy-MM-dd HH:mm:ss z</maven.build.timestamp.format>
+		<enableGPU>false</enableGPU>
 		<!-- OS-specific JVM arguments for running integration tests -->
 		<integrationTestExtraJVMArgs />
 	</properties>
@@ -108,30 +110,16 @@
 			</excludes>
 			<targetPath>scripts</targetPath>
 		</resource>
+		<resource>
+			<directory>src/main/cpp/kernels</directory>
+			<excludes>
+				<exclude>*.cu</exclude>
+			</excludes>
+			<targetPath>kernels</targetPath>
+		</resource>
 	</resources>
 
 		<plugins>
-
-			<plugin>
-				<groupId>org.codehaus.mojo</groupId>
-				<artifactId>exec-maven-plugin</artifactId>
-				<version>1.1.1</version>
-				<executions>
-					<execution>
-						<phase>pre-integration-test</phase>
-						<goals>
-							<goal>java</goal>
-						</goals>
-						<configuration>
-							<mainClass>org.apache.sysml.utils.InstallDependencyForIntegrationTests</mainClass>
-							<arguments>
-								<argument>${skipTests}</argument>
-							</arguments>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-dependency-plugin</artifactId>
@@ -279,7 +267,6 @@
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-resources-plugin</artifactId>
-				<version>2.4</version>
 				<executions>
 					<execution>
 						<id>copy-resources</id>
@@ -426,12 +413,59 @@
 							</filesets>
 						</configuration>
 					</execution>
+					<execution>
+						<!-- NOTE: We don't clean up systemml.egg-info since this makes it difficult
+							to uninstall a dev version after a maven clean -->
+						<id>clean-python-files</id>
+						<phase>clean</phase>
+						<goals>
+							<goal>clean</goal>
+						</goals>
+						<configuration>
+							<excludeDefaultDirectories>true</excludeDefaultDirectories>
+							<filesets>
+								<fileset>
+									<directory>src/main/python/dist</directory>
+								</fileset>
+								<fileset>
+									<directory>src/main/python/systemml/systemml-java</directory>
+								</fileset>
+								<fileset>
+									<directory>src/main/python/systemml/__pycache__</directory>
+								</fileset>
+								<fileset>
+									<directory>src/main/python/systemml</directory>
+									<includes>
+										<include>project_info.py</include>
+									</includes>
+								</fileset>
+							</filesets>
+						</configuration>
+					</execution>
+					<execution>
+						<!-- remove antlr tokens files during initialize phase so antlr4 -->
+						<!-- plugin can regenerate them during generate-sources phase -->
+						<id>remove-antlr-tokens-files</id>
+						<phase>initialize</phase>
+						<goals>
+							<goal>clean</goal>
+						</goals>
+						<configuration>
+							<filesets>
+								<fileset>
+									<directory>src/main/java</directory>
+									<includes>
+										<include>*.tokens</include>
+									</includes>
+								</fileset>
+							</filesets>
+						</configuration>
+					</execution>
 				</executions>
 			</plugin>
 
 			<plugin>
 				<artifactId>maven-assembly-plugin</artifactId>
-				<version>2.4</version><!--$NO-MVN-MAN-VER$-->
 				<configuration>
 					<tarLongFileMode>gnu</tarLongFileMode>
 				</configuration>
@@ -451,6 +485,12 @@
 								<manifest>
 									<mainClass>org.apache.sysml.api.DMLScript</mainClass>
 								</manifest>
+								<manifestEntries>
+									<Build-Time>${maven.build.timestamp}</Build-Time>
+									<Group-Id>${project.groupId}</Group-Id>
+									<Artifact-Id>${project.artifactId}</Artifact-Id>
+									<Version>${project.version}</Version>
+								</manifestEntries>
 							</archive>
 						</configuration>
 					</execution>
@@ -477,10 +517,28 @@
 				</executions>
 			</plugin>
 
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>exec-maven-plugin</artifactId>
+				<version>1.5.0</version>
+				<executions>
+					<execution>
+						<phase>prepare-package</phase>
+						<goals>
+							<goal>java</goal>
+						</goals>
+						<configuration>
+							<mainClass>org.apache.sysml.utils.InstallDependencyForIntegrationTests</mainClass>
+							<arguments>
+								<argument>true</argument> <!-- <argument>${skipTests}</argument> -->
+								<argument>${enableGPU}</argument>
+							</arguments>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
-
 	</build>
-
 
 	<profiles>
 		<profile>
@@ -488,6 +546,14 @@
 			<properties>
 				<scala.version>2.10.5</scala.version>
 				<scala.binary.version>2.10</scala.binary.version>
+			</properties>
+		</profile>
+		
+		<profile>
+			<id>scala-2.11</id>
+			<properties>
+				<scala.version>2.11.8</scala.version>
+				<scala.binary.version>2.11</scala.binary.version>
 			</properties>
 		</profile>
 
@@ -516,8 +582,7 @@
 			<build>
 				<pluginManagement>
 					<plugins>
-						<!-- Prevent m2e warnings about the use of maven-remote-resources-plugin
-                        in the Maven archetype that we currently use for this project. -->
+						<!-- Prevent m2e warnings in Eclipse. -->
 						<plugin>
 							<groupId>org.eclipse.m2e</groupId>
 							<artifactId>lifecycle-mapping</artifactId>
@@ -529,9 +594,39 @@
 											<pluginExecutionFilter>
 												<groupId>org.apache.maven.plugins</groupId>
 												<artifactId>maven-remote-resources-plugin</artifactId>
-												<versionRange>[1.0,)</versionRange>
+												<versionRange>[1.4,)</versionRange>
 												<goals>
 													<goal>process</goal>
+												</goals>
+											</pluginExecutionFilter>
+											<action>
+												<ignore>
+												</ignore>
+											</action>
+										</pluginExecution>
+										<pluginExecution>
+											<pluginExecutionFilter>
+												<groupId>org.apache.maven.plugins</groupId>
+												<artifactId>maven-clean-plugin</artifactId>
+												<versionRange>[3.0.0,)</versionRange>
+												<goals>
+													<goal>clean</goal>
+												</goals>
+											</pluginExecutionFilter>
+											<action>
+												<ignore>
+												</ignore>
+											</action>
+										</pluginExecution>
+										<pluginExecution>
+											<pluginExecutionFilter>
+												<groupId>net.alchim31.maven</groupId>
+												<artifactId>scala-maven-plugin</artifactId>
+												<versionRange>[3.2.2,)</versionRange>
+												<goals>
+													<goal>add-source</goal>
+													<goal>compile</goal>
+													<goal>testCompile</goal>
 												</goals>
 											</pluginExecutionFilter>
 											<action>
@@ -587,6 +682,10 @@
 								<exclude>**/*.ipynb</exclude>
 								<!-- Generated antlr files -->
 								<exclude>src/main/java/*.tokens</exclude>
+								<!-- Generated python files -->
+								<exclude>src/main/python/systemml.egg-info/**</exclude>
+								<!-- Compiled ptx file from nvcc -->
+								<exclude>src/main/cpp/kernels/SystemML.ptx</exclude>
 								<!-- Test Validation files -->
 								<exclude>src/test/scripts/functions/external/kMeans/kMeansWrapperOutput</exclude>
 								<exclude>src/test/scripts/functions/external/kMeans2/kMeansWrapperOutput1</exclude>
@@ -621,11 +720,11 @@
 		</profile>
 
 		<profile>
-			<!-- Need to ignore doclint warnings for javadocs generated on Java 8 until warnings are fixed -->
-			<id>ignore-doclint-warnings-for-javadocs-on-java-8</id>
-			<activation>
+			<!-- Can be used to ignore doclint javadoc issues -->
+			<id>ignore-doclint</id>
+			<!-- <activation>
 				<jdk>[1.8,)</jdk>
-			</activation>
+			</activation> -->
 			<properties>
 				<javadoc.opts>-Xdoclint:none</javadoc.opts>
 			</properties>
@@ -639,7 +738,6 @@
 				<plugins>
 					<plugin>
 						<artifactId>maven-assembly-plugin</artifactId>
-						<version>2.4</version><!--$NO-MVN-MAN-VER$-->
 						<configuration>
 							<tarLongFileMode>gnu</tarLongFileMode>
 						</configuration>
@@ -672,25 +770,6 @@
 							</execution>
 
 							<execution>
-								<id>create-standalone-jar</id>
-								<phase>package</phase>
-								<goals>
-									<goal>single</goal>
-								</goals>
-								<configuration>
-									<descriptors>
-										<descriptor>src/assembly/standalone-jar.xml</descriptor>
-									</descriptors>
-									<archive>
-										<index>true</index>
-										<manifest>
-											<mainClass>org.apache.sysml.api.DMLScript</mainClass>
-										</manifest>
-									</archive>
-								</configuration>
-							</execution>
-
-							<execution>
 								<id>create-binary-standalone-distribution-assembly</id>
 								<phase>package</phase>
 								<goals>
@@ -702,37 +781,9 @@
 									</descriptors>
 								</configuration>
 							</execution>
-
-							<!--execution>
-								<id>create-inmemory-jar</id>
-								<phase>package</phase>
-								<goals>
-									<goal>single</goal>
-								</goals>
-								<configuration>
-									<descriptors>
-										<descriptor>src/assembly/inmemory.xml</descriptor>
-									</descriptors>
-								</configuration>
-							</execution-->
 						</executions>
 					</plugin>
-
-					<plugin>
-						<artifactId>maven-deploy-plugin</artifactId>
-						<version>2.8.2</version>
-						<configuration>
-							<updateReleaseInfo>true</updateReleaseInfo>
-						</configuration>
-						<executions>
-							<execution>
-								<goals>
-									<goal>deploy</goal>
-								</goals>
-							</execution>
-						</executions>
-					</plugin>
-
+					
 					<plugin>
 						<artifactId>maven-gpg-plugin</artifactId>
 						<version>1.6</version>
@@ -802,6 +853,147 @@
 								<goals>
 									<goal>jar</goal>
 								</goals>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-resources-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>copy-project-info-for-python</id>
+								<phase>prepare-package</phase>
+								<goals>
+									<goal>copy-resources</goal>
+								</goals>
+								<configuration>
+									<overwrite>true</overwrite>
+									<outputDirectory>${basedir}/src/main/python/systemml</outputDirectory>
+									<resources>
+										<resource>
+											<directory>${basedir}/src/main/resources/python</directory>
+											<includes>
+												<include>project_info.py</include>
+											</includes>
+											<filtering>true</filtering>
+										</resource>
+									</resources>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<version>1.5.0</version>
+						<executions>
+							<execution>
+								<id>generate-python-package-1</id>
+								<phase>package</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>python</executable>
+									<workingDirectory>src/main/python</workingDirectory>
+									<arguments>
+										<argument>pre_setup.py</argument>
+									</arguments>
+								</configuration>
+							</execution>
+							<execution>
+								<id>generate-python-package-2</id>
+								<phase>package</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>python</executable>
+									<workingDirectory>src/main/python</workingDirectory>
+									<arguments>
+										<argument>setup.py</argument>
+										<argument>sdist</argument>
+										<argument>--dist-dir=../../../target</argument>
+									</arguments>
+								</configuration>
+							</execution>
+							<execution>
+								<id>generate-python-package-3</id>
+								<phase>package</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>python</executable>
+									<workingDirectory>src/main/python</workingDirectory>
+									<arguments>
+										<argument>post_setup.py</argument>
+									</arguments>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+
+		<profile>
+			<id>inmemory</id>
+			<build>
+				<plugins>
+					<plugin>
+						<artifactId>maven-assembly-plugin</artifactId>
+						<configuration>
+							<tarLongFileMode>gnu</tarLongFileMode>
+						</configuration>
+						<executions>
+							<execution>
+								<id>create-inmemory-jar</id>
+								<phase>package</phase>
+								<goals>
+									<goal>single</goal>
+								</goals>
+								<configuration>
+									<descriptors>
+										<descriptor>src/assembly/inmemory.xml</descriptor>
+									</descriptors>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+
+		<profile>
+			<!-- Profile to create standalone jar.
+				Execute with `mvn clean package -P standalone-jar` -->
+			<id>standalone-jar</id>
+			<build>
+				<plugins>
+					<plugin>
+						<artifactId>maven-assembly-plugin</artifactId>
+						<configuration>
+							<tarLongFileMode>gnu</tarLongFileMode>
+						</configuration>
+						<executions>
+							<execution>
+								<id>create-standalone-jar</id>
+								<phase>package</phase>
+								<goals>
+									<goal>single</goal>
+								</goals>
+								<configuration>
+									<descriptors>
+										<descriptor>src/assembly/standalone-jar.xml</descriptor>
+									</descriptors>
+									<archive>
+										<index>true</index>
+										<manifest>
+											<mainClass>org.apache.sysml.api.DMLScript</mainClass>
+										</manifest>
+									</archive>
+								</configuration>
 							</execution>
 						</executions>
 					</plugin>

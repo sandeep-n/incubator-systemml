@@ -30,8 +30,9 @@ public class ConvolutionTransform extends Lop
 
 	
 	public enum OperationTypes {
-		MAX_POOLING, MAX_POOLING_BACKWARD,
-		DIRECT_CONV2D, DIRECT_CONV2D_BACKWARD_FILTER, DIRECT_CONV2D_BACKWARD_DATA
+		MAX_POOLING, MAX_POOLING_BACKWARD, RELU_MAX_POOLING,
+		DIRECT_CONV2D, DIRECT_CONV2D_BACKWARD_FILTER, DIRECT_CONV2D_BACKWARD_DATA,
+		BIAS_ADD
 	};
 	
 	private OperationTypes operation = null;
@@ -39,23 +40,21 @@ public class ConvolutionTransform extends Lop
 	
 	/**
 	 * Constructor when we have one input.
-	 * @param input
-	 * @param op
+	 * 
+	 * @param input low-level operator
+	 * @param op convolution transform operation type
+	 * @param dt data type
+	 * @param vt value type
+	 * @param et execution type
+	 * @param k number of threads
 	 */
-
 	public ConvolutionTransform(Lop input, ConvolutionTransform.OperationTypes op, DataType dt, ValueType vt, ExecType et, int k) 
 	{
 		super(Lop.Type.Transform, dt, vt);		
 		init(input, op, dt, vt, et);
 		numThreads = k;
 	}
-	
-	public ConvolutionTransform(Lop input, ConvolutionTransform.OperationTypes op, DataType dt, ValueType vt) 
-	{
-		super(Lop.Type.Transform, dt, vt);		
-		init(input, op, dt, vt, ExecType.MR);
-	}
-	
+
 	private void init (Lop input, ConvolutionTransform.OperationTypes op, DataType dt, ValueType vt, ExecType et) 
 	{
 		operation = op;
@@ -86,7 +85,7 @@ public class ConvolutionTransform extends Lop
 
 	/**
 	 * method to get operation type
-	 * @return
+	 * @return operation type
 	 */
 	 
 	public OperationTypes getOperationType()
@@ -100,11 +99,17 @@ public class ConvolutionTransform extends Lop
 		case MAX_POOLING:
 			return "maxpooling";
 			
+		case RELU_MAX_POOLING:
+			return "relu_maxpooling";
+			
 		case MAX_POOLING_BACKWARD:
 			return "maxpooling_backward";
 		
 		case DIRECT_CONV2D:
 			return "conv2d";
+		
+		case BIAS_ADD:
+			return "bias_add";
 			
 		case DIRECT_CONV2D_BACKWARD_FILTER:
 			return "conv2d_backward_filter";
@@ -115,6 +120,33 @@ public class ConvolutionTransform extends Lop
 		default:
 			throw new UnsupportedOperationException(this.printErrorLocation() + "Instruction is not defined for Transform operation " + operation);
 				
+		}
+	}
+	
+	public String getInstructions(String input, String bias, String output) throws LopsException {
+		if(operation == OperationTypes.BIAS_ADD) {
+			StringBuilder sb = new StringBuilder();
+			sb.append( getExecType() );
+			
+			sb.append( OPERAND_DELIMITOR );
+			sb.append( getOpcode() );
+			sb.append( OPERAND_DELIMITOR );
+			sb.append( getInputs().get(0).prepInputOperand(input));
+			sb.append( OPERAND_DELIMITOR );
+			sb.append( getInputs().get(0).prepInputOperand(bias));
+			//output
+			sb.append( OPERAND_DELIMITOR );
+			sb.append( this.prepOutputOperand(output));
+			
+			//append degree of parallelism
+			if( getExecType()==ExecType.CP ) {
+				sb.append( OPERAND_DELIMITOR );
+				sb.append( numThreads );
+			}
+			return sb.toString();
+		}
+		else {
+			throw new LopsException("The operation is not supported with two operands:" + operation.name());
 		}
 	}
 	

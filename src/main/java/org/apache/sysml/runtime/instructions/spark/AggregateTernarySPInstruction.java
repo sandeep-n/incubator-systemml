@@ -20,6 +20,7 @@
 package org.apache.sysml.runtime.instructions.spark;
 
 import org.apache.spark.api.java.JavaPairRDD;
+import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.function.Function;
 
 import scala.Tuple2;
@@ -40,9 +41,6 @@ import org.apache.sysml.runtime.matrix.operators.AggregateBinaryOperator;
 import org.apache.sysml.runtime.matrix.operators.AggregateOperator;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
-/**
- * 
- */
 public class AggregateTernarySPInstruction extends ComputationSPInstruction
 {
 	
@@ -91,14 +89,14 @@ public class AggregateTernarySPInstruction extends ComputationSPInstruction
 		
 		//execute aggregate ternary operation
 		AggregateBinaryOperator aggop = (AggregateBinaryOperator) _optr;
-		JavaPairRDD<MatrixIndexes,MatrixBlock> out = null;
+		JavaRDD<MatrixBlock> out = null;
 		if( in3 != null ) { //3 inputs
-			out = in1.join( in2 ).join( in3 )
-				     .mapValues(new RDDAggregateTernaryFunction(aggop));
+			out = in1.join( in2 ).join( in3 ).values()
+				     .map(new RDDAggregateTernaryFunction(aggop));
 		}
 		else { //2 inputs (third is literal 1)
-			out = in1.join( in2 )
-					 .mapValues(new RDDAggregateTernaryFunction2(aggop));				
+			out = in1.join( in2 ).values()
+					 .map(new RDDAggregateTernaryFunction2(aggop));				
 		}
 				
 		//aggregate and create output (no lineage because scalar)	   
@@ -106,10 +104,7 @@ public class AggregateTernarySPInstruction extends ComputationSPInstruction
 		DoubleObject ret = new DoubleObject(tmp.getValue(0, 0));
 		sec.setVariable(output.getName(), ret);
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDAggregateTernaryFunction 
 		implements Function<Tuple2<Tuple2<MatrixBlock,MatrixBlock>,MatrixBlock>, MatrixBlock>
 	{
@@ -136,14 +131,11 @@ public class AggregateTernarySPInstruction extends ComputationSPInstruction
 			
 			//create output matrix block (w/ correction)
 			MatrixBlock out = new MatrixBlock(2,1,false);
-			out.setValue(0, 0, ret.getDoubleValue());
+			out.quickSetValue(0, 0, ret.getDoubleValue());
 			return out;
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class RDDAggregateTernaryFunction2 
 		implements Function<Tuple2<MatrixBlock,MatrixBlock>, MatrixBlock>
 	{
@@ -169,7 +161,7 @@ public class AggregateTernarySPInstruction extends ComputationSPInstruction
 			
 			//create output matrix block (w/ correction)
 			MatrixBlock out = new MatrixBlock(2,1,false);
-			out.setValue(0, 0, ret.getDoubleValue());
+			out.quickSetValue(0, 0, ret.getDoubleValue());
 			return out;
 		}
 	}

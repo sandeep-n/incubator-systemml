@@ -25,7 +25,6 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -38,13 +37,20 @@ import org.apache.commons.lang3.text.WordUtils;
 import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.mllib.linalg.VectorUDT;
 import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.DataFrame;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
 import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.parser.ParseException;
+import org.apache.sysml.parser.Statement;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
@@ -53,6 +59,7 @@ import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.cp.DoubleObject;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
 import org.apache.sysml.runtime.instructions.cp.StringObject;
+import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 
@@ -73,7 +80,8 @@ public final class MLContextUtil {
 	 */
 	@SuppressWarnings("rawtypes")
 	public static final Class[] COMPLEX_DATA_TYPES = { JavaRDD.class, RDD.class, DataFrame.class,
-			BinaryBlockMatrix.class, Matrix.class, (new double[][] {}).getClass(), MatrixBlock.class, URL.class };
+			BinaryBlockMatrix.class, BinaryBlockFrame.class, Matrix.class, Frame.class, (new double[][] {}).getClass(),
+			MatrixBlock.class, URL.class };
 
 	/**
 	 * All data types supported by the MLContext API
@@ -136,11 +144,7 @@ public final class MLContextUtil {
 	 * @return {@code true} if Spark version supported; otherwise {@code false}.
 	 */
 	public static boolean isSparkVersionSupported(String sparkVersion) {
-		if (compareVersion(sparkVersion, MLContext.SYSTEMML_MINIMUM_SPARK_VERSION) < 0) {
-			return false;
-		} else {
-			return true;
-		}
+		return compareVersion(sparkVersion, MLContext.SYSTEMML_MINIMUM_SPARK_VERSION) >= 0;
 	}
 
 	/**
@@ -154,8 +158,8 @@ public final class MLContextUtil {
 	 */
 	public static void verifySparkVersionSupported(SparkContext sc) {
 		if (!MLContextUtil.isSparkVersionSupported(sc.version())) {
-			throw new MLContextException("SystemML requires Spark " + MLContext.SYSTEMML_MINIMUM_SPARK_VERSION
-					+ " or greater");
+			throw new MLContextException(
+					"SystemML requires Spark " + MLContext.SYSTEMML_MINIMUM_SPARK_VERSION + " or greater");
 		}
 	}
 
@@ -194,41 +198,8 @@ public final class MLContextUtil {
 		compilerConfig.set(ConfigType.IGNORE_UNSPECIFIED_ARGS, true);
 		compilerConfig.set(ConfigType.REJECT_READ_WRITE_UNKNOWNS, false);
 		compilerConfig.set(ConfigType.ALLOW_CSE_PERSISTENT_READS, false);
+		compilerConfig.set(ConfigType.MLCONTEXT, true);
 		ConfigurationManager.setGlobalConfig(compilerConfig);
-	}
-
-	/**
-	 * Convenience method to generate a {@code Map<String, Object>} of key/value
-	 * pairs.
-	 * <p>
-	 * Example:<br>
-	 * {@code Map<String, Object> inputMap = MLContextUtil.generateInputMap("A", 1, "B", "two", "C", 3);}
-	 * <br>
-	 * <br>
-	 * This is equivalent to:<br>
-	 * <code>Map&lt;String, Object&gt; inputMap = new LinkedHashMap&lt;String, Object&gt;(){{
-	 *     <br>put("A", 1);
-	 *     <br>put("B", "two");
-	 *     <br>put("C", 3);
-	 * <br>}};</code>
-	 * 
-	 * @param objs
-	 *            List of String/Object pairs
-	 * @return Map of String/Object pairs
-	 * @throws MLContextException
-	 *             if the number of arguments is not an even number
-	 */
-	public static Map<String, Object> generateInputMap(Object... objs) {
-		int len = objs.length;
-		if ((len & 1) == 1) {
-			throw new MLContextException("The number of arguments needs to be an even number");
-		}
-		Map<String, Object> map = new LinkedHashMap<String, Object>();
-		int i = 0;
-		while (i < len) {
-			map.put((String) objs[i++], objs[i++]);
-		}
-		return map;
 	}
 
 	/**
@@ -311,8 +282,8 @@ public final class MLContextUtil {
 			}
 		}
 		if (!supported) {
-			throw new MLContextException("Input parameter (\"" + parameterName + "\") value type not supported: "
-					+ o.getClass());
+			throw new MLContextException(
+					"Input parameter (\"" + parameterName + "\") value type not supported: " + o.getClass());
 		}
 	}
 
@@ -337,12 +308,38 @@ public final class MLContextUtil {
 	}
 
 	/**
+	 * Obtain the SystemML scalar value type string equivalent of an accepted
+	 * basic type (Integer, Boolean, Double, String)
+	 * 
+	 * @param object
+	 *            the object type to be examined
+	 * @return a String representing the type as a SystemML scalar value type
+	 */
+	public static String getBasicTypeString(Object object) {
+		if (!isBasicType(object)) {
+			throw new MLContextException("Type (" + object.getClass() + ") not a recognized basic type");
+		}
+		Class<? extends Object> clazz = object.getClass();
+		if (clazz.equals(Integer.class)) {
+			return Statement.INT_VALUE_TYPE;
+		} else if (clazz.equals(Boolean.class)) {
+			return Statement.BOOLEAN_VALUE_TYPE;
+		} else if (clazz.equals(Double.class)) {
+			return Statement.DOUBLE_VALUE_TYPE;
+		} else if (clazz.equals(String.class)) {
+			return Statement.STRING_VALUE_TYPE;
+		} else {
+			return null;
+		}
+	}
+
+	/**
 	 * Is the object one of the supported complex data types? (JavaRDD, RDD,
 	 * DataFrame, BinaryBlockMatrix, Matrix, double[][], MatrixBlock, URL)
 	 * 
 	 * @param object
 	 *            the object type to be examined
-	 * @return {@code true} if type is a complexe data type; otherwise
+	 * @return {@code true} if type is a complex data type; otherwise
 	 *         {@code false}.
 	 */
 	public static boolean isComplexType(Object object) {
@@ -419,13 +416,16 @@ public final class MLContextUtil {
 	 *            The name of the input parameter
 	 * @param parameterValue
 	 *            The value of the input parameter
-	 * @param matrixMetadata
-	 *            matrix metadata
+	 * @param metadata
+	 *            matrix/frame metadata
 	 * @return input in SystemML data representation
 	 */
-	public static Data convertInputType(String parameterName, Object parameterValue, MatrixMetadata matrixMetadata) {
+	public static Data convertInputType(String parameterName, Object parameterValue, Metadata metadata) {
 		String name = parameterName;
 		Object value = parameterValue;
+		boolean hasMetadata = (metadata != null) ? true : false;
+		boolean hasMatrixMetadata = hasMetadata && (metadata instanceof MatrixMetadata) ? true : false;
+		boolean hasFrameMetadata = hasMetadata && (metadata instanceof FrameMetadata) ? true : false;
 		if (name == null) {
 			throw new MLContextException("Input parameter name is null");
 		} else if (value == null) {
@@ -433,96 +433,172 @@ public final class MLContextUtil {
 		} else if (value instanceof JavaRDD<?>) {
 			@SuppressWarnings("unchecked")
 			JavaRDD<String> javaRDD = (JavaRDD<String>) value;
-			MatrixObject matrixObject;
-			if ((matrixMetadata != null) && (matrixMetadata.getMatrixFormat() == MatrixFormat.IJV)) {
-				matrixObject = MLContextConversionUtil.javaRDDStringIJVToMatrixObject(name, javaRDD, matrixMetadata);
-			} else {
-				matrixObject = MLContextConversionUtil.javaRDDStringCSVToMatrixObject(name, javaRDD, matrixMetadata);
+
+			if (hasMatrixMetadata) {
+				MatrixMetadata matrixMetadata = (MatrixMetadata) metadata;
+				if (matrixMetadata.getMatrixFormat() == MatrixFormat.IJV) {
+					return MLContextConversionUtil.javaRDDStringIJVToMatrixObject(name, javaRDD, matrixMetadata);
+				} else {
+					return MLContextConversionUtil.javaRDDStringCSVToMatrixObject(name, javaRDD, matrixMetadata);
+				}
+			} else if (hasFrameMetadata) {
+				FrameMetadata frameMetadata = (FrameMetadata) metadata;
+				if (frameMetadata.getFrameFormat() == FrameFormat.IJV) {
+					return MLContextConversionUtil.javaRDDStringIJVToFrameObject(name, javaRDD, frameMetadata);
+				} else {
+					return MLContextConversionUtil.javaRDDStringCSVToFrameObject(name, javaRDD, frameMetadata);
+				}
+			} else if (!hasMetadata) {
+				String firstLine = javaRDD.first();
+				boolean isAllNumbers = isCSVLineAllNumbers(firstLine);
+				if (isAllNumbers) {
+					return MLContextConversionUtil.javaRDDStringCSVToMatrixObject(name, javaRDD);
+				} else {
+					return MLContextConversionUtil.javaRDDStringCSVToFrameObject(name, javaRDD);
+				}
 			}
-			return matrixObject;
+
 		} else if (value instanceof RDD<?>) {
 			@SuppressWarnings("unchecked")
 			RDD<String> rdd = (RDD<String>) value;
-			MatrixObject matrixObject;
-			if ((matrixMetadata != null) && (matrixMetadata.getMatrixFormat() == MatrixFormat.IJV)) {
-				matrixObject = MLContextConversionUtil.rddStringIJVToMatrixObject(name, rdd, matrixMetadata);
-			} else {
-				matrixObject = MLContextConversionUtil.rddStringCSVToMatrixObject(name, rdd, matrixMetadata);
-			}
 
-			return matrixObject;
+			if (hasMatrixMetadata) {
+				MatrixMetadata matrixMetadata = (MatrixMetadata) metadata;
+				if (matrixMetadata.getMatrixFormat() == MatrixFormat.IJV) {
+					return MLContextConversionUtil.rddStringIJVToMatrixObject(name, rdd, matrixMetadata);
+				} else {
+					return MLContextConversionUtil.rddStringCSVToMatrixObject(name, rdd, matrixMetadata);
+				}
+			} else if (hasFrameMetadata) {
+				FrameMetadata frameMetadata = (FrameMetadata) metadata;
+				if (frameMetadata.getFrameFormat() == FrameFormat.IJV) {
+					return MLContextConversionUtil.rddStringIJVToFrameObject(name, rdd, frameMetadata);
+				} else {
+					return MLContextConversionUtil.rddStringCSVToFrameObject(name, rdd, frameMetadata);
+				}
+			} else if (!hasMetadata) {
+				String firstLine = rdd.first();
+				boolean isAllNumbers = isCSVLineAllNumbers(firstLine);
+				if (isAllNumbers) {
+					return MLContextConversionUtil.rddStringCSVToMatrixObject(name, rdd);
+				} else {
+					return MLContextConversionUtil.rddStringCSVToFrameObject(name, rdd);
+				}
+			}
 		} else if (value instanceof MatrixBlock) {
 			MatrixBlock matrixBlock = (MatrixBlock) value;
-			MatrixObject matrixObject = MLContextConversionUtil.matrixBlockToMatrixObject(name, matrixBlock,
-					matrixMetadata);
-			return matrixObject;
+			return MLContextConversionUtil.matrixBlockToMatrixObject(name, matrixBlock, (MatrixMetadata) metadata);
+		} else if (value instanceof FrameBlock) {
+			FrameBlock frameBlock = (FrameBlock) value;
+			return MLContextConversionUtil.frameBlockToFrameObject(name, frameBlock, (FrameMetadata) metadata);
 		} else if (value instanceof DataFrame) {
 			DataFrame dataFrame = (DataFrame) value;
-			MatrixObject matrixObject = MLContextConversionUtil
-					.dataFrameToMatrixObject(name, dataFrame, matrixMetadata);
-			return matrixObject;
+
+			if (hasMatrixMetadata) {
+				return MLContextConversionUtil.dataFrameToMatrixObject(name, dataFrame, (MatrixMetadata) metadata);
+			} else if (hasFrameMetadata) {
+				return MLContextConversionUtil.dataFrameToFrameObject(name, dataFrame, (FrameMetadata) metadata);
+			} else if (!hasMetadata) {
+				boolean looksLikeMatrix = doesDataFrameLookLikeMatrix(dataFrame);
+				if (looksLikeMatrix) {
+					return MLContextConversionUtil.dataFrameToMatrixObject(name, dataFrame);
+				} else {
+					return MLContextConversionUtil.dataFrameToFrameObject(name, dataFrame);
+				}
+			}
 		} else if (value instanceof BinaryBlockMatrix) {
 			BinaryBlockMatrix binaryBlockMatrix = (BinaryBlockMatrix) value;
-			if (matrixMetadata == null) {
-				matrixMetadata = binaryBlockMatrix.getMatrixMetadata();
+			if (metadata == null) {
+				metadata = binaryBlockMatrix.getMatrixMetadata();
 			}
 			JavaPairRDD<MatrixIndexes, MatrixBlock> binaryBlocks = binaryBlockMatrix.getBinaryBlocks();
-			MatrixObject matrixObject = MLContextConversionUtil.binaryBlocksToMatrixObject(name, binaryBlocks,
-					matrixMetadata);
-			return matrixObject;
+			return MLContextConversionUtil.binaryBlocksToMatrixObject(name, binaryBlocks, (MatrixMetadata) metadata);
+		} else if (value instanceof BinaryBlockFrame) {
+			BinaryBlockFrame binaryBlockFrame = (BinaryBlockFrame) value;
+			if (metadata == null) {
+				metadata = binaryBlockFrame.getFrameMetadata();
+			}
+			JavaPairRDD<Long, FrameBlock> binaryBlocks = binaryBlockFrame.getBinaryBlocks();
+			return MLContextConversionUtil.binaryBlocksToFrameObject(name, binaryBlocks, (FrameMetadata) metadata);
 		} else if (value instanceof Matrix) {
 			Matrix matrix = (Matrix) value;
-			MatrixObject matrixObject = matrix.asMatrixObject();
-			return matrixObject;
+			return matrix.toMatrixObject();
+		} else if (value instanceof Frame) {
+			Frame frame = (Frame) value;
+			return frame.toFrameObject();
 		} else if (value instanceof double[][]) {
 			double[][] doubleMatrix = (double[][]) value;
-			MatrixObject matrixObject = MLContextConversionUtil.doubleMatrixToMatrixObject(name, doubleMatrix,
-					matrixMetadata);
-			return matrixObject;
+			return MLContextConversionUtil.doubleMatrixToMatrixObject(name, doubleMatrix, (MatrixMetadata) metadata);
 		} else if (value instanceof URL) {
 			URL url = (URL) value;
-			MatrixObject matrixObject = MLContextConversionUtil.urlToMatrixObject(name, url, matrixMetadata);
-			return matrixObject;
+			return MLContextConversionUtil.urlToMatrixObject(name, url, (MatrixMetadata) metadata);
 		} else if (value instanceof Integer) {
-			Integer i = (Integer) value;
-			IntObject iObj = new IntObject(i);
-			return iObj;
+			return new IntObject((Integer) value);
 		} else if (value instanceof Double) {
-			Double d = (Double) value;
-			DoubleObject dObj = new DoubleObject(d);
-			return dObj;
+			return new DoubleObject((Double) value);
 		} else if (value instanceof String) {
-			String s = (String) value;
-			StringObject sObj = new StringObject(s);
-			return sObj;
+			return new StringObject((String) value);
 		} else if (value instanceof Boolean) {
-			Boolean b = (Boolean) value;
-			BooleanObject bObj = new BooleanObject(b);
-			return bObj;
+			return new BooleanObject((Boolean) value);
 		}
 		return null;
 	}
 
 	/**
-	 * Return the default matrix block size.
+	 * If no metadata is supplied for an RDD or JavaRDD, this method can be used
+	 * to determine whether the data appears to be matrix (or a frame)
 	 * 
-	 * @return the default matrix block size
+	 * @param line
+	 *            a line of the RDD
+	 * @return {@code true} if all the csv-separated values are numbers,
+	 *         {@code false} otherwise
 	 */
-	public static int defaultBlockSize() {
-		DMLConfig conf = ConfigurationManager.getDMLConfig();
-		int blockSize = conf.getIntValue(DMLConfig.DEFAULT_BLOCK_SIZE);
-		return blockSize;
+	public static boolean isCSVLineAllNumbers(String line) {
+		if (StringUtils.isBlank(line)) {
+			return false;
+		}
+		String[] parts = line.split(",");
+		for (int i = 0; i < parts.length; i++) {
+			String part = parts[i].trim();
+			try {
+				Double.parseDouble(part);
+			} catch (NumberFormatException e) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**
-	 * Return the location of the scratch space directory.
+	 * Examine the DataFrame schema to determine whether the data appears to be
+	 * a matrix.
 	 * 
-	 * @return the lcoation of the scratch space directory
+	 * @param df
+	 *            the DataFrame
+	 * @return {@code true} if the DataFrame appears to be a matrix,
+	 *         {@code false} otherwise
 	 */
-	public static String scratchSpace() {
-		DMLConfig conf = ConfigurationManager.getDMLConfig();
-		String scratchSpace = conf.getTextValue(DMLConfig.SCRATCH_SPACE);
-		return scratchSpace;
+	public static boolean doesDataFrameLookLikeMatrix(DataFrame df) {
+		StructType schema = df.schema();
+		StructField[] fields = schema.fields();
+		if (fields == null) {
+			return true;
+		}
+		for (StructField field : fields) {
+			DataType dataType = field.dataType();
+			if ((dataType != DataTypes.DoubleType) && (dataType != DataTypes.IntegerType)
+					&& (dataType != DataTypes.LongType) && (!(dataType instanceof VectorUDT))) {
+				// uncomment if we support arrays of doubles for matrices
+				// if (dataType instanceof ArrayType) {
+				// ArrayType arrayType = (ArrayType) dataType;
+				// if (arrayType.elementType() == DataTypes.DoubleType) {
+				// continue;
+				// }
+				// }
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -699,9 +775,10 @@ public final class MLContextUtil {
 	 *            the title to display for the inputs
 	 * @param map
 	 *            the map of inputs
+	 * @param symbolTable the symbol table
 	 * @return the script inputs represented as a String
 	 */
-	public static String displayInputs(String name, Map<String, Object> map) {
+	public static String displayInputs(String name, Map<String, Object> map, LocalVariableMap symbolTable) {
 		StringBuilder sb = new StringBuilder();
 		sb.append(name);
 		sb.append(":\n");
@@ -727,6 +804,11 @@ public final class MLContextUtil {
 
 				sb.append(" (");
 				sb.append(type);
+				if (doesSymbolTableContainMatrixObject(symbolTable, key)) {
+					sb.append(" as Matrix");
+				} else if (doesSymbolTableContainFrameObject(symbolTable, key)) {
+					sb.append(" as Frame");
+				}
 				sb.append(") ");
 
 				sb.append(key);
@@ -853,4 +935,57 @@ public final class MLContextUtil {
 		return sb.toString();
 	}
 
+	/**
+	 * Obtain the Spark Context
+	 * 
+	 * @param mlContext
+	 *            the SystemML MLContext
+	 * @return the Spark Context
+	 */
+	public static SparkContext getSparkContext(MLContext mlContext) {
+		return mlContext.getSparkContext();
+	}
+
+	/**
+	 * Obtain the Java Spark Context
+	 * 
+	 * @param mlContext
+	 *            the SystemML MLContext
+	 * @return the Java Spark Context
+	 */
+	public static JavaSparkContext getJavaSparkContext(MLContext mlContext) {
+		return new JavaSparkContext(mlContext.getSparkContext());
+	}
+
+	/**
+	 * Determine if the symbol table contains a FrameObject with the given
+	 * variable name.
+	 * 
+	 * @param symbolTable
+	 *            the LocalVariableMap
+	 * @param variableName
+	 *            the variable name
+	 * @return {@code true} if the variable in the symbol table is a
+	 *         FrameObject, {@code false} otherwise.
+	 */
+	public static boolean doesSymbolTableContainFrameObject(LocalVariableMap symbolTable, String variableName) {
+		return (symbolTable != null && symbolTable.keySet().contains(variableName)
+				&& symbolTable.get(variableName) instanceof FrameObject);
+	}
+
+	/**
+	 * Determine if the symbol table contains a MatrixObject with the given
+	 * variable name.
+	 * 
+	 * @param symbolTable
+	 *            the LocalVariableMap
+	 * @param variableName
+	 *            the variable name
+	 * @return {@code true} if the variable in the symbol table is a
+	 *         MatrixObject, {@code false} otherwise.
+	 */
+	public static boolean doesSymbolTableContainMatrixObject(LocalVariableMap symbolTable, String variableName) {
+		return (symbolTable != null && symbolTable.keySet().contains(variableName)
+				&& symbolTable.get(variableName) instanceof MatrixObject);
+	}
 }

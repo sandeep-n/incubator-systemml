@@ -21,6 +21,7 @@ package org.apache.sysml.api;
 
 import java.util.ArrayList;
 
+import org.apache.sysml.api.mlcontext.MLContextException;
 import org.apache.sysml.api.monitoring.Location;
 import org.apache.sysml.parser.Expression;
 import org.apache.sysml.parser.LanguageException;
@@ -39,26 +40,14 @@ public class MLContextProxy
 	
 	private static boolean _active = false;
 	
-	/**
-	 * 
-	 * @param flag
-	 */
 	public static void setActive(boolean flag) {
 		_active = flag;
 	}
 	
-	/**
-	 * 
-	 * @return
-	 */
 	public static boolean isActive() {
 		return _active;
 	}
 
-	/**
-	 * 
-	 * @param tmp
-	 */
 	public static ArrayList<Instruction> performCleanupAfterRecompilation(ArrayList<Instruction> tmp) 
 	{
 		if(org.apache.sysml.api.MLContext.getActiveMLContext() != null) {
@@ -69,12 +58,6 @@ public class MLContextProxy
 		return tmp;
 	}
 
-	/**
-	 * 
-	 * @param source
-	 * @param targetname
-	 * @throws LanguageException 
-	 */
 	public static void setAppropriateVarsForRead(Expression source, String targetname) 
 		throws LanguageException 
 	{
@@ -84,18 +67,24 @@ public class MLContextProxy
 			org.apache.sysml.api.mlcontext.MLContext.getActiveMLContext().getInternalProxy().setAppropriateVarsForRead(source, targetname);
 		}
 	}
-	
+
 	public static Object getActiveMLContext() {
 		if (org.apache.sysml.api.MLContext.getActiveMLContext() != null) {
 			return org.apache.sysml.api.MLContext.getActiveMLContext();
 		} else if (org.apache.sysml.api.mlcontext.MLContext.getActiveMLContext() != null) {
 			return org.apache.sysml.api.mlcontext.MLContext.getActiveMLContext();
-		} else {
-			return null;
 		}
-		
+		return null;
 	}
-	
+
+	public static Object getActiveMLContextForAPI() {
+		if (org.apache.sysml.api.mlcontext.MLContext.getActiveMLContext() != null) {
+			return org.apache.sysml.api.mlcontext.MLContext.getActiveMLContext();
+		}
+		throw new MLContextException("No MLContext object is currently active. Have you created one? "
+				+ "Hint: in Scala, 'val ml = new MLContext(sc)'", true);
+	}
+
 	public static void setInstructionForMonitoring(Instruction inst) {
 		Location loc = inst.getLocation();
 		if (loc == null) {

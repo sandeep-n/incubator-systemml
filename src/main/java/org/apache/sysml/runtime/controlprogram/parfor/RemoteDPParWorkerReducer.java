@@ -50,9 +50,6 @@ import org.apache.sysml.runtime.matrix.mapred.MRJobConfiguration;
 import org.apache.sysml.runtime.util.LocalFileUtils;
 import org.apache.sysml.utils.Statistics;
 
-/**
- *
- */
 public class RemoteDPParWorkerReducer extends ParWorker
 	implements Reducer<LongWritable, Writable, Writable, Writable>
 {
@@ -72,16 +69,13 @@ public class RemoteDPParWorkerReducer extends ParWorker
 	private boolean _tSparseCol = false;
 		
 	//MR ParWorker attributes  
-	protected String  _stringID       = null; 
-	protected HashMap<String, String> _rvarFnames = null; 
+	protected String  _stringID       = null;
+	protected HashMap<String, String> _rvarFnames = null; // TODO investigate unused field
 
 	//cached collector/reporter
 	protected OutputCollector<Writable, Writable> _out = null;
 	protected Reporter _report = null;
-	
-	/**
-	 * 
-	 */
+
 	public RemoteDPParWorkerReducer() 
 	{
 		
@@ -124,9 +118,6 @@ public class RemoteDPParWorkerReducer extends ParWorker
 		RemoteParForUtils.incrementParForMRCounters(_report, 1, 1);
 	}
 
-	/**
-	 * 
-	 */
 	@Override
 	public void configure(JobConf job)
 	{
@@ -210,10 +201,7 @@ public class RemoteDPParWorkerReducer extends ParWorker
 			Statistics.reset();
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	@Override
 	public void close() 
 	    throws IOException 
@@ -229,7 +217,7 @@ public class RemoteDPParWorkerReducer extends ParWorker
 			//print heaver hitter per task
 			JobConf job = ConfigurationManager.getCachedJobConf();
 			if( DMLScript.STATISTICS && !InfrastructureAnalyzer.isLocalMode(job) )
-				LOG.info("\nSystemML Statistics:\nHeavy hitter instructions (name, time, count):\n" + Statistics.getHeavyHitters(10));		
+				LOG.info("\nSystemML Statistics:\nHeavy hitter instructions (name, time, count):\n" + Statistics.getHeavyHitters(DMLScript.STATISTICS_COUNT));
 		}
 		catch(Exception ex)
 		{
@@ -250,9 +238,9 @@ public class RemoteDPParWorkerReducer extends ParWorker
 	 * Note it reuses the instance attribute _partition - multiple calls
 	 * will overwrite the result.
 	 * 
-	 * @param valueList
-	 * @return
-	 * @throws IOException 
+	 * @param valueList iterable writables
+	 * @return matrix block
+	 * @throws IOException if IOException occurs
 	 */
 	private MatrixBlock collectBinaryBlock( Iterator<Writable> valueList ) 
 		throws IOException 
@@ -299,9 +287,9 @@ public class RemoteDPParWorkerReducer extends ParWorker
 	 * Note it reuses the instance attribute _partition - multiple calls
 	 * will overwrite the result.
 	 * 
-	 * @param valueList
-	 * @return
-	 * @throws IOException 
+	 * @param valueList iterable writables
+	 * @return matrix block
+	 * @throws IOException if IOException occurs
 	 */
 	private MatrixBlock collectBinaryCellInput( Iterator<Writable> valueList ) 
 		throws IOException 
@@ -344,12 +332,7 @@ public class RemoteDPParWorkerReducer extends ParWorker
 		
 		return _partition;
 	}
-	
-	/**
-	 * 
-	 * @param sort
-	 * @throws IOException
-	 */
+
 	private void cleanupCollectedMatrixPartition(boolean sort) 
 		throws IOException
 	{

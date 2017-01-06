@@ -20,7 +20,6 @@
 package org.apache.sysml.hops;
 
 import java.util.HashMap;
-import java.util.List;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -35,19 +34,23 @@ import org.apache.sysml.hops.Hop.FileFormatTypes;
 import org.apache.sysml.hops.Hop.OpOp2;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.lops.Checkpoint;
+import org.apache.sysml.lops.Lop;
 import org.apache.sysml.lops.LopProperties.ExecType;
+import org.apache.sysml.lops.compile.Dag;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
+import org.apache.sysml.runtime.functionobjects.IntegerDivide;
+import org.apache.sysml.runtime.functionobjects.Modulus;
 import org.apache.sysml.runtime.instructions.cp.Data;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.matrix.data.SparseBlock;
-import org.apache.sysml.runtime.matrix.data.SparseRow;
+import org.apache.sysml.runtime.util.IndexRange;
 import org.apache.sysml.runtime.util.UtilFunctions;
 import org.apache.sysml.yarn.ropt.YarnClusterAnalyzer;
 
@@ -60,7 +63,7 @@ public class OptimizerUtils
 	////////////////////////////////////////////////////////
 	/**
 	 * Utilization factor used in deciding whether an operation to be scheduled on CP or MR. 
-	 * NOTE: it is important that MEM_UTIL_FACTOR+CacheableData.CACHING_BUFFER_SIZE < 1.0
+	 * NOTE: it is important that MEM_UTIL_FACTOR+CacheableData.CACHING_BUFFER_SIZE &lt; 1.0
 	 */
 	public static double MEM_UTIL_FACTOR = 0.7d;
 	
@@ -86,7 +89,6 @@ public class OptimizerUtils
 	public static final long INT_SIZE = 4;
 	public static final long CHAR_SIZE = 1;
 	public static final long BOOLEAN_SIZE = 1;
-	public static final double BIT_SIZE = (double)1/8;
 	public static final double INVALID_SIZE = -1d; // memory estimate not computed
 
 	//constants for valid CP matrix dimension sizes / nnz (dense/sparse)
@@ -107,9 +109,6 @@ public class OptimizerUtils
 	 */
 	public static boolean ALLOW_CONSTANT_FOLDING = true;
 	
-	/**
-	 * 
-	 */
 	public static boolean ALLOW_ALGEBRAIC_SIMPLIFICATION = true; 
 	
 	/**
@@ -119,9 +118,6 @@ public class OptimizerUtils
 	 */
 	public static boolean ALLOW_BRANCH_REMOVAL = true;
 	
-	/**
-	 * 
-	 */
 	public static boolean ALLOW_AUTO_VECTORIZATION = true;
 	
 	/**
@@ -138,9 +134,6 @@ public class OptimizerUtils
 	 */
 	public static boolean ALLOW_WORSTCASE_SIZE_EXPRESSION_EVALUATION = true;
 
-	/**
-	 * 
-	 */
 	public static boolean ALLOW_RAND_JOB_RECOMPILE = true;
 	
 	/**
@@ -200,11 +193,8 @@ public class OptimizerUtils
 	
 	/**
 	 * Enables automatic csv-binary block reblock.
-	 * 
-	 * TODO enable by default and remove once file-based transform completely
-	 * removed via frame-based transform/transformapply 
 	 */
-	public static boolean ALLOW_FRAME_CSV_REBLOCK = false;
+	public static boolean ALLOW_FRAME_CSV_REBLOCK = true;
 	
 	
 	public static long GPU_MEMORY_BUDGET = -1;
@@ -271,11 +261,6 @@ public class OptimizerUtils
 		return (getOptLevel() == level);
 	}
 	
-	/**
-	 * 
-	 * @param optlevel
-	 * @throws DMLRuntimeException
-	 */
 	public static CompilerConfig constructCompilerConfig( DMLConfig dmlconf ) 
 		throws DMLRuntimeException
 	{
@@ -375,10 +360,7 @@ public class OptimizerUtils
 		
 		return cconf;
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static long getDefaultSize() {
 		//we need to set default_size larger than any execution context
 		//memory budget, however, it should not produce overflows on sum
@@ -400,8 +382,7 @@ public class OptimizerUtils
 	/**
 	 * Returns memory budget (according to util factor) in bytes
 	 * 
-	 * @param localOnly specifies if only budget of current JVM or also MR JVMs 
-	 * @return
+	 * @return local memory budget
 	 */
 	public static double getLocalMemBudget()
 	{
@@ -409,20 +390,11 @@ public class OptimizerUtils
 		return ret * OptimizerUtils.MEM_UTIL_FACTOR;
 	}
 	
-	/**
-	 * 
-	 * @return
-	 */
 	public static double getRemoteMemBudgetMap()
 	{
 		return getRemoteMemBudgetMap(false);
 	}
 	
-	
-	/**
-	 * 
-	 * @return
-	 */
 	public static double getRemoteMemBudgetMap(boolean substractSortBuffer)
 	{
 		double ret = InfrastructureAnalyzer.getRemoteMaxMemoryMap();
@@ -430,22 +402,13 @@ public class OptimizerUtils
 			ret -= InfrastructureAnalyzer.getRemoteMaxMemorySortBuffer();
 		return ret * OptimizerUtils.MEM_UTIL_FACTOR;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public static double getRemoteMemBudgetReduce()
 	{
 		double ret = InfrastructureAnalyzer.getRemoteMaxMemoryReduce();
 		return ret * OptimizerUtils.MEM_UTIL_FACTOR;
 	}
 
-	/**
-	 * 
-	 * @param size
-	 * @return
-	 */
 	public static boolean checkSparkBroadcastMemoryBudget( double size )
 	{
 		double memBudgetExec = SparkExecutionContext.getBroadcastMemoryBudget();
@@ -456,16 +419,7 @@ public class OptimizerUtils
 		//memory and hand it over to the spark context as in-memory object
 		return ( size < memBudgetExec && 2*size < memBudgetLocal );
 	}
-	
-	/**
-	 * 
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @param nnz
-	 * @return
-	 */
+
 	public static boolean checkSparkBroadcastMemoryBudget( long rlen, long clen, long brlen, long bclen, long nnz )
 	{
 		double memBudgetExec = SparkExecutionContext.getBroadcastMemoryBudget();
@@ -481,13 +435,7 @@ public class OptimizerUtils
 		return (   OptimizerUtils.isValidCPDimensions(rlen, clen)
 				&& sizeP < memBudgetExec && size+sizeP < memBudgetLocal );
 	}
-	
-	/**
-	 * 
-	 * @param mc
-	 * @param memPinned
-	 * @return
-	 */
+
 	public static boolean checkSparkCollectMemoryBudget( MatrixCharacteristics mc, long memPinned )
 	{
 		return checkSparkCollectMemoryBudget(
@@ -498,15 +446,6 @@ public class OptimizerUtils
 				mc.getNonZeros(), memPinned);
 	}
 	
-	/**
-	 * 
-	 * @param rlen
-	 * @param clen
-	 * @param brlen
-	 * @param bclen
-	 * @param nnz
-	 * @return
-	 */
 	public static boolean checkSparkCollectMemoryBudget( long rlen, long clen, int brlen, int bclen, long nnz, long memPinned )
 	{
 		//compute size of output matrix and its blocked representation
@@ -517,15 +456,10 @@ public class OptimizerUtils
 		//check if both output matrix and partitioned matrix fit into local mem budget
 		return (memPinned + memMatrix + memPMatrix < getLocalMemBudget());
 	}
-	
-	/**
-	 * 
-	 * @param mcIn
-	 * @return
-	 */
+
 	public static boolean checkSparseBlockCSRConversion( MatrixCharacteristics mcIn ) {
 		return Checkpoint.CHECKPOINT_SPARSE_CSR
-			&& OptimizerUtils.getSparsity(mcIn) < MatrixBlock.SPARSITY_TURN_POINT;
+			&& OptimizerUtils.getSparsity(mcIn) < MatrixBlock.getSparsityTurnPoint();
 	}
 	
 	/**
@@ -533,8 +467,8 @@ public class OptimizerUtils
 	 * This is either just the configured value (SystemML config) or
 	 * the minimum of configured value and available reduce slots. 
 	 * 
-	 * @param configOnly
-	 * @return
+	 * @param configOnly true if configured value
+	 * @return number of reducers
 	 */
 	public static int getNumReducers( boolean configOnly )
 	{
@@ -549,11 +483,7 @@ public class OptimizerUtils
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public static int getNumMappers()
 	{
 		int ret = InfrastructureAnalyzer.getRemoteParallelMapTasks();
@@ -564,11 +494,7 @@ public class OptimizerUtils
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public static RUNTIME_PLATFORM getDefaultExecutionMode() {
 		//default execution type is hybrid (cp+mr)
 		RUNTIME_PLATFORM ret = RUNTIME_PLATFORM.HYBRID;
@@ -580,20 +506,17 @@ public class OptimizerUtils
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public static boolean isSparkExecutionMode() {
 		return (   DMLScript.rtplatform == RUNTIME_PLATFORM.SPARK
 				|| DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID_SPARK);
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
+	public static boolean isHadoopExecutionMode() {
+		return (   DMLScript.rtplatform == RUNTIME_PLATFORM.HADOOP
+				|| DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID);
+	}
+
 	public static boolean isHybridExecutionMode() {
 		return (  DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID 
 			   || DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID_SPARK );
@@ -605,7 +528,7 @@ public class OptimizerUtils
 	 * PARALLEL_READ_PARALLELISM_MULTIPLIER. If PARALLEL_READ_TEXTFORMATS
 	 * is disabled, this method returns 1.
 	 * 
-	 * @return
+	 * @return degree of parallelism
 	 */
 	public static int getParallelTextReadParallelism()
 	{
@@ -617,11 +540,7 @@ public class OptimizerUtils
 				     * PARALLEL_CP_READ_PARALLELISM_MULTIPLIER;
 		return (int) Math.round(dop);
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public static int getParallelBinaryReadParallelism()
 	{
 		if( !ConfigurationManager.getCompilerConfigFlag(ConfigType.PARALLEL_CP_READ_BINARYFORMATS) )
@@ -639,7 +558,7 @@ public class OptimizerUtils
 	 * PARALLEL_WRITE_PARALLELISM_MULTIPLIER. If PARALLEL_WRITE_TEXTFORMATS
 	 * is disabled, this method returns 1.
 	 * 
-	 * @return
+	 * @return degree of parallelism
 	 */
 	public static int getParallelTextWriteParallelism()
 	{
@@ -652,10 +571,6 @@ public class OptimizerUtils
 		return (int) Math.round(dop);
 	}
 
-	/**
-	 * 
-	 * @return
-	 */
 	public static int getParallelBinaryWriteParallelism()
 	{
 		if( !ConfigurationManager.getCompilerConfigFlag(ConfigType.PARALLEL_CP_WRITE_BINARYFORMATS) )
@@ -671,11 +586,10 @@ public class OptimizerUtils
 	// Memory Estimates   //
 	////////////////////////
 	
-	/**
-	 * 
-	 * @param mc
-	 * @return
-	 */
+	public static long estimateSize(MatrixCharacteristics mc) {
+		return estimateSizeExactSparsity(mc);
+	}
+
 	public static long estimateSizeExactSparsity(MatrixCharacteristics mc)
 	{
 		return estimateSizeExactSparsity(
@@ -688,10 +602,10 @@ public class OptimizerUtils
 	 * Estimates the footprint (in bytes) for an in-memory representation of a
 	 * matrix with dimensions=(nrows,ncols) and and number of non-zeros nnz.
 	 * 
-	 * @param nrows
-	 * @param ncols
-	 * @param sp
-	 * @return
+	 * @param nrows number of rows
+	 * @param ncols number of cols
+	 * @param nnz number of non-zeros
+	 * @return memory footprint
 	 */
 	public static long estimateSizeExactSparsity(long nrows, long ncols, long nnz) 
 	{
@@ -709,10 +623,10 @@ public class OptimizerUtils
 	 * must be used so that worst-case estimates are computed, whenever
 	 * applicable.
 	 * 
-	 * @param nrows
-	 * @param ncols
-	 * @param sp
-	 * @return
+	 * @param nrows number of rows
+	 * @param ncols number of cols
+	 * @param sp sparsity
+	 * @return memory footprint
 	 */
 	public static long estimateSizeExactSparsity(long nrows, long ncols, double sp) 
 	{
@@ -723,8 +637,8 @@ public class OptimizerUtils
 	 * Estimates the footprint (in bytes) for a partitioned in-memory representation of a
 	 * matrix with the given matrix characteristics
 	 * 
-	 * @param mc
-	 * @return
+	 * @param mc matrix characteristics
+	 * @return memory estimate
 	 */
 	public static long estimatePartitionedSizeExactSparsity(MatrixCharacteristics mc)
 	{
@@ -740,10 +654,12 @@ public class OptimizerUtils
 	 * Estimates the footprint (in bytes) for a partitioned in-memory representation of a
 	 * matrix with dimensions=(nrows,ncols) and number of non-zeros nnz.
 	 * 
-	 * @param nrows
-	 * @param ncols
-	 * @param sp
-	 * @return
+	 * @param rlen number of rows
+	 * @param clen number of cols
+	 * @param brlen rows per block
+	 * @param bclen cols per block
+	 * @param nnz number of non-zeros
+	 * @return memory estimate
 	 */
 	public static long estimatePartitionedSizeExactSparsity(long rlen, long clen, long brlen, long bclen, long nnz) 
 	{
@@ -755,10 +671,12 @@ public class OptimizerUtils
 	 * Estimates the footprint (in bytes) for a partitioned in-memory representation of a
 	 * matrix with dimensions=(nrows,ncols) and sparsity=sp.
 	 * 
-	 * @param nrows
-	 * @param ncols
-	 * @param sp
-	 * @return
+	 * @param rlen number of rows
+	 * @param clen number of cols
+	 * @param brlen rows per block
+	 * @param bclen cols per block
+	 * @param sp sparsity
+	 * @return memory estimate
 	 */
 	public static long estimatePartitionedSizeExactSparsity(long rlen, long clen, long brlen, long bclen, double sp) 
 	{
@@ -802,57 +720,20 @@ public class OptimizerUtils
 	 * Similar to estimate() except that it provides worst-case estimates
 	 * when the optimization type is ROBUST.
 	 * 
-	 * @param nrows
-	 * @param ncols
-	 * @param sp
-	 * @return
+	 * @param nrows number of rows
+	 * @param ncols number of cols
+	 * @return memory estimate
 	 */
 	public static long estimateSize(long nrows, long ncols) 
 	{
 		return estimateSizeExactSparsity(nrows, ncols, 1.0);
 	}
 	
-	/**
-	 * 
-	 * @param nrows
-	 * @param ncols
-	 * @return
-	 */
 	public static long estimateSizeEmptyBlock(long nrows, long ncols)
 	{
 		return estimateSizeExactSparsity(0, 0, 0.0d);
 	}
-	
-	/**
-	 * Estimates the memory footprint of a SparseRow with <code>clen</code>
-	 * columns and <code>sp</code> sparsity. This method accounts for the
-	 * overhead incurred by extra cells allocated (but not used) for SparseRow.
-	 * It assumes that non-zeros are uniformly distributed in the matrix --
-	 * i.e., #estimated nnz in a given SparseRow = clen*sp.
-	 * 
-	 * @param clen
-	 * @param sp
-	 * @return estimated size in bytes
-	 */
-	public static long estimateRowSize(long clen, double sp) 
-	{	
-		if ( sp == 0 )
-			return 0;
-		
-		int basicSize = 28;
-		int cellSize = 12; // every cell takes 12 (8+4) bytes
-		if ( sp == 1 ) {
-			return clen * cellSize; 
-		}
-		long  numCells = SparseRow.initialCapacity;
-		if ( (long) (sp*clen) > numCells ) {
-			numCells = (long) (sp*clen);
-		}
-		long allocatedCells = (long)Math.pow(2, Math.ceil(Math.log(numCells)/Math.log(2)) );
-		long rowSize = basicSize +  allocatedCells * cellSize;
-		return rowSize;
-	}
-	
+
 	public static long estimateSizeTextOutput( long rows, long cols, long nnz, OutputInfo oinfo )
 	{
 		long bsize = MatrixBlock.estimateSizeOnDisk(rows, cols, nnz);
@@ -866,11 +747,47 @@ public class OptimizerUtils
 	}
 	
 	/**
+	 * Indicates if the given indexing range is block aligned, i.e., it does not require
+	 * global aggregation of blocks.
+	 * 
+	 * @param ixrange indexing range
+	 * @param mc matrix characteristics
+	 * @return true if indexing range is block aligned
+	 */
+	public static boolean isIndexingRangeBlockAligned(IndexRange ixrange, MatrixCharacteristics mc) {
+		long rl = ixrange.rowStart;
+		long ru = ixrange.rowEnd;
+		long cl = ixrange.colStart;
+		long cu = ixrange.colEnd;
+		long brlen = mc.getRowsPerBlock();
+		long bclen = mc.getColsPerBlock();
+		return isIndexingRangeBlockAligned(rl, ru, cl, cu, brlen, bclen);
+	}
+	
+	/**
+	 * Indicates if the given indexing range is block aligned, i.e., it does not require
+	 * global aggregation of blocks.
+	 * 
+	 * @param rl rows lower
+	 * @param ru rows upper
+	 * @param cl cols lower
+	 * @param cu cols upper
+	 * @param brlen rows per block
+	 * @param bclen cols per block
+	 * @return true if indexing range is block aligned
+	 */
+	public static boolean isIndexingRangeBlockAligned(long rl, long ru, long cl, long cu, long brlen, long bclen) {
+		return rl != -1 && ru != -1 && cl != -1 && cu != -1
+				&&((rl-1)%brlen == 0 && (cl-1)%bclen == 0 
+				|| (rl-1)/brlen == (ru-1)/brlen && (cl-1)%bclen == 0 
+				|| (rl-1)%brlen == 0 && (cl-1)/bclen == (cu-1)/bclen);
+	}
+	/**
 	 * Returns false if dimensions known to be invalid; other true
 	 * 
-	 * @param rows
-	 * @param cols
-	 * @return
+	 * @param rows number of rows
+	 * @param cols number of cols
+	 * @return true if dimensions valid
 	 */
 	public static boolean isValidCPDimensions( long rows, long cols )
 	{
@@ -882,26 +799,26 @@ public class OptimizerUtils
 	
 	/**
 	 * Returns false if schema and names are not properly specified; other true
-	 * Length to be > 0, and length of both to be equal.
+	 * Length to be &gt; 0, and length of both to be equal.
 	 * 
-	 * @param schema
-	 * @param names
-	 * @return
+	 * @param schema the schema
+	 * @param names the names
+	 * @return false if schema and names are not properly specified
 	 */
-	public static boolean isValidCPDimensions( List<ValueType> schema, List<String> names )
+	public static boolean isValidCPDimensions( ValueType[] schema, String[] names )
 	{
 		// Length of schema and names to be same, and > 0.
-		return (schema != null && names != null && schema.size() > 0 && schema.size() == names.size());
+		return (schema != null && names != null && schema.length > 0 && schema.length == names.length);
 	}
 	
 	/**
 	 * Determines if valid matrix size to be represented in CP data structures. Note that
 	 * sparsity needs to be specified as rows*cols if unknown. 
 	 * 
-	 * @param rows
-	 * @param cols
-	 * @param sparsity
-	 * @return
+	 * @param rows number of rows
+	 * @param cols number of cols
+	 * @param sparsity the sparsity
+	 * @return true if valid matrix size
 	 */
 	public static boolean isValidCPMatrixSize( long rows, long cols, double sparsity )
 	{
@@ -928,12 +845,28 @@ public class OptimizerUtils
 		return ret;
 	}
 	
-
 	/**
+	 * Indicates if the given matrix characteristics exceed the threshold for 
+	 * caching, i.e., the matrix should be cached.
 	 * 
-	 * @return
-	 * @throws HopsException 
+	 * @param dim2 dimension 2
+	 * @param outMem ?
+	 * @return true if the given matrix characteristics exceed threshold
 	 */
+	public static boolean exceedsCachingThreshold(long dim2, double outMem) {
+		return !(dim2 > 1 && outMem < getLocalMemBudget()
+			|| dim2 == 1 && outMem < getLocalMemBudget()/3);
+	}
+	
+	/**
+	 * Wrapper over internal filename construction for external usage. 
+	 * 
+	 * @return unique temp file name
+	 */
+	public static String getUniqueTempFileName() {
+		return new Dag<Lop>().getNextUniqueFilename();
+	}
+
 	public static boolean allowsToFilterEmptyBlockOutputs( Hop hop ) 
 		throws HopsException
 	{
@@ -948,11 +881,7 @@ public class OptimizerUtils
 			
 		return ret;	
 	}
-	
-	/**
-	 * 
-	 * @return
-	 */
+
 	public static int getConstrainedNumThreads(int maxNumThreads)
 	{
 		//by default max local parallelism (vcores) 
@@ -978,12 +907,13 @@ public class OptimizerUtils
 	/**
 	 * Estimates the result sparsity for Matrix Multiplication A %*% B. 
 	 *  
-	 * @param sp1 -- sparsity of A
-	 * @param sp2 -- sparsity of B
-	 * @param m -- nrow(A)
-	 * @param k -- ncol(A), nrow(B)
-	 * @param n -- ncol(B)
-	 * @return
+	 * @param sp1 sparsity of A
+	 * @param sp2 sparsity of B
+	 * @param m nrow(A)
+	 * @param k ncol(A), nrow(B)
+	 * @param n ncol(B)
+	 * @param worstcase true if worst case
+	 * @return the sparsity
 	 */
 	public static double getMatMultSparsity(double sp1, double sp2, long m, long k, long n, boolean worstcase) 
 	{
@@ -995,17 +925,7 @@ public class OptimizerUtils
 		else
 			return (1 - Math.pow(1-sp1*sp2, k) );
 	}
-	
-	/**
-	 * 
-	 * @param rlen1
-	 * @param clen1
-	 * @param nnz1
-	 * @param rlen2
-	 * @param clen2
-	 * @param nnz2
-	 * @return
-	 */
+
 	public static double getLeftIndexingSparsity( long rlen1, long clen1, long nnz1, long rlen2, long clen2, long nnz2 )
 	{
 		boolean scalarRhs = (rlen2==0 && clen2==0);
@@ -1026,8 +946,8 @@ public class OptimizerUtils
 	/**
 	 * Determines if a given binary op is potentially conditional sparse safe. 
 	 * 
-	 * @param op
-	 * @return
+	 * @param op the HOP OpOp2
+	 * @return true if potentially conditional sparse safe
 	 */
 	public static boolean isBinaryOpConditionalSparseSafe( OpOp2 op ) 
 	{
@@ -1042,9 +962,9 @@ public class OptimizerUtils
 	 * Determines if a given binary op with scalar literal guarantee an output
 	 * sparsity which is exactly the same as its matrix input sparsity.
 	 * 
-	 * @param op
-	 * @param lit
-	 * @return
+	 * @param op the HOP OpOp2
+	 * @param lit literal operator
+	 * @return true if output sparsity same as matrix input sparsity
 	 */
 	public static boolean isBinaryOpConditionalSparseSafeExact( OpOp2 op, LiteralOp lit )
 	{
@@ -1052,14 +972,7 @@ public class OptimizerUtils
 		
 		return ( op==OpOp2.NOTEQUAL && val==0);
 	}
-	
-	/**
-	 * 
-	 * @param sp1
-	 * @param op
-	 * @param lit
-	 * @return
-	 */
+
 	public static double getBinaryOpSparsityConditionalSparseSafe( double sp1, OpOp2 op, LiteralOp lit )
 	{
 		double val = HopRewriteUtils.getDoubleValueSafe(lit);
@@ -1074,12 +987,11 @@ public class OptimizerUtils
 	/**
 	 * Estimates the result sparsity for matrix-matrix binary operations (A op B)
 	 * 
-	 * @param sp1 -- sparsity of A
-	 * @param sp2 -- sparsity of B
-	 * @param op -- binary operation
-	 * @return
-	 * 
-	 * NOTE: append has specific computation
+	 * @param sp1 sparsity of A
+	 * @param sp2 sparsity of B
+	 * @param op binary operation
+	 * @param worstcase true if worst case
+	 * @return result sparsity for matrix-matrix binary operations
 	 */
 	public static double getBinaryOpSparsity(double sp1, double sp2, OpOp2 op, boolean worstcase) 
 	{
@@ -1182,9 +1094,10 @@ public class OptimizerUtils
 	 * It returns the exact results of this expressions if known, otherwise
 	 * Long.MAX_VALUE if unknown.
 	 * 
-	 * @param root
-	 * @return
-	 * @throws HopsException 
+	 * @param root the root high-level operator
+	 * @param valMemo ?
+	 * @return size expression
+	 * @throws HopsException if HopsException occurs
 	 */
 	public static long rEvalSimpleLongExpression( Hop root, HashMap<Long, Long> valMemo ) 
 		throws HopsException
@@ -1200,14 +1113,6 @@ public class OptimizerUtils
 		return ret;
 	}
 	
-	/**
-	 * 
-	 * @param root
-	 * @param valMemo
-	 * @param vars
-	 * @return
-	 * @throws HopsException 
-	 */
 	public static long rEvalSimpleLongExpression( Hop root, HashMap<Long, Long> valMemo, LocalVariableMap vars ) 
 		throws HopsException
 	{
@@ -1222,13 +1127,6 @@ public class OptimizerUtils
 		return ret;
 	}
 	
-	/**
-	 * 
-	 * @param root
-	 * @param valMemo
-	 * @return
-	 * @throws HopsException
-	 */
 	public static double rEvalSimpleDoubleExpression( Hop root, HashMap<Long, Double> valMemo ) 
 		throws HopsException
 	{
@@ -1255,14 +1153,6 @@ public class OptimizerUtils
 		return ret;
 	}
 	
-	/**
-	 * 
-	 * @param root
-	 * @param valMemo
-	 * @param vars
-	 * @return
-	 * @throws HopsException
-	 */
 	public static double rEvalSimpleDoubleExpression( Hop root, HashMap<Long, Double> valMemo, LocalVariableMap vars ) 
 		throws HopsException
 	{
@@ -1291,15 +1181,7 @@ public class OptimizerUtils
 		valMemo.put(root.getHopID(), ret);
 		return ret;
 	}
-	
-	
-	/**
-	 * 
-	 * @param root
-	 * @param valMemo
-	 * @return
-	 * @throws HopsException
-	 */
+
 	protected static double rEvalSimpleUnaryDoubleExpression( Hop root, HashMap<Long, Double> valMemo ) 
 		throws HopsException
 	{
@@ -1336,15 +1218,7 @@ public class OptimizerUtils
 		valMemo.put(root.getHopID(), ret);
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param root
-	 * @param valMemo
-	 * @param vars
-	 * @return
-	 * @throws HopsException
-	 */
+
 	protected static double rEvalSimpleUnaryDoubleExpression( Hop root, HashMap<Long, Double> valMemo, LocalVariableMap vars ) 
 		throws HopsException
 	{
@@ -1381,14 +1255,7 @@ public class OptimizerUtils
 		valMemo.put(root.getHopID(), ret);
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param root
-	 * @param valMemo
-	 * @return
-	 * @throws HopsException
-	 */
+
 	protected static double rEvalSimpleBinaryDoubleExpression( Hop root, HashMap<Long, Double> valMemo ) 
 		throws HopsException
 	{
@@ -1414,6 +1281,9 @@ public class OptimizerUtils
 				case MIN:   ret = Math.min(lret, rret); break;
 				case MAX:   ret = Math.max(lret, rret); break;
 				case POW:   ret = Math.pow(lret, rret); break; 
+				//special mod / inddiv for runtime consistency
+				case MODULUS: ret = Modulus.getFnObject().execute(lret, rret); break;
+				case INTDIV:  ret = IntegerDivide.getFnObject().execute(lret, rret); break; 
 				default: ret = Double.MAX_VALUE;
 			}
 		}
@@ -1421,15 +1291,7 @@ public class OptimizerUtils
 		valMemo.put(root.getHopID(), ret);
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param root
-	 * @param valMemo
-	 * @param vars
-	 * @return
-	 * @throws HopsException
-	 */
+
 	protected static double rEvalSimpleBinaryDoubleExpression( Hop root, HashMap<Long, Double> valMemo, LocalVariableMap vars ) 
 		throws HopsException
 	{
@@ -1455,13 +1317,14 @@ public class OptimizerUtils
 				case MIN:   ret = Math.min(lret, rret); break;
 				case MAX:   ret = Math.max(lret, rret); break;
 				case POW:   ret = Math.pow(lret, rret); break; 
+				//special mod / inddiv for runtime consistency
+				case MODULUS: ret = Modulus.getFnObject().execute(lret, rret); break;
+				case INTDIV:  ret = IntegerDivide.getFnObject().execute(lret, rret); break; 
 				default: ret = Double.MAX_VALUE;
 			}
 		}
 		
 		valMemo.put(root.getHopID(), ret);
 		return ret;
-	}
-	
-		
+	}		
 }

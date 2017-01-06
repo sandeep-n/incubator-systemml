@@ -21,8 +21,6 @@ package org.apache.sysml.api;
 import java.io.IOException;
 import java.util.List;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.DataFrame;
@@ -31,17 +29,15 @@ import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.SQLContext.QueryExecution;
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
 import org.apache.spark.sql.types.StructType;
-
-import scala.Tuple2;
-
 import org.apache.sysml.hops.OptimizerUtils;
-import org.apache.sysml.parser.ParseException;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.spark.functions.GetMIMBFromRow;
 import org.apache.sysml.runtime.instructions.spark.functions.GetMLBlock;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
+
+import scala.Tuple2;
 
 /**
  * Experimental API: Might be discontinued in future release
@@ -68,7 +64,6 @@ import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
  */
 public class MLMatrix extends DataFrame {
 	private static final long serialVersionUID = -7005940673916671165L;
-	protected static final Log LOG = LogFactory.getLog(DMLScript.class.getName());
 	
 	protected MatrixCharacteristics mc = null;
 	protected MLContext ml = null;
@@ -115,6 +110,11 @@ public class MLMatrix extends DataFrame {
 	
 	/**
 	 * Convenient method to write a MLMatrix.
+	 * 
+	 * @param filePath the file path
+	 * @param format the format
+	 * @throws IOException if IOException occurs
+	 * @throws DMLException if DMLException occurs
 	 */
 	public void write(String filePath, String format) throws IOException, DMLException {
 		ml.reset();
@@ -145,10 +145,9 @@ public class MLMatrix extends DataFrame {
 	
 	/**
 	 * Gets or computes the number of rows.
-	 * @return
-	 * @throws ParseException 
-	 * @throws DMLException 
-	 * @throws IOException 
+	 * @return the number of rows
+	 * @throws IOException if IOException occurs
+	 * @throws DMLException if DMLException occurs
 	 */
 	public long numRows() throws IOException, DMLException {
 		if(mc.rowsKnown()) {
@@ -161,10 +160,9 @@ public class MLMatrix extends DataFrame {
 	
 	/**
 	 * Gets or computes the number of columns.
-	 * @return
-	 * @throws ParseException 
-	 * @throws DMLException 
-	 * @throws IOException 
+	 * @return the number of columns
+	 * @throws IOException if IOException occurs
+	 * @throws DMLException if DMLException occurs
 	 */
 	public long numCols() throws IOException, DMLException {
 		if(mc.colsKnown()) {

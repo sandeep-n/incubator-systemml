@@ -126,7 +126,9 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	 * come before constant folding while the other simplifications should come after constant
 	 * folding. Hence, not applied yet.
 	 * 
-	 * @throws HopsException
+	 * @param hop high-level operator
+	 * @param descendFirst true if recursively process children first
+	 * @throws HopsException if HopsException occurs
 	 */
 	private void rule_AlgebraicSimplification(Hop hop, boolean descendFirst) 
 		throws HopsException 
@@ -192,14 +194,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		hop.setVisited(Hop.VisitStatus.DONE);
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop removeEmptyRightIndexing(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -225,13 +219,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 */
 	private Hop removeUnnecessaryRightIndexing(Hop parent, Hop hi, int pos)
 	{
 		if( hi instanceof IndexingOp ) //indexing op
@@ -257,14 +244,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop removeEmptyLeftIndexing(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -290,13 +269,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 */
 	private Hop removeUnnecessaryLeftIndexing(Hop parent, Hop hi, int pos)
 	{
 		if( hi instanceof LeftIndexingOp  ) //left indexing op
@@ -320,13 +292,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 */
 	private Hop fuseLeftIndexingChainToAppend(Hop parent, Hop hi, int pos)
 	{
 		boolean applied = false;
@@ -390,13 +355,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 */
 	private Hop removeUnnecessaryCumulativeOp(Hop parent, Hop hi, int pos)
 	{
 		if( hi instanceof UnaryOp && ((UnaryOp)hi).isCumulativeUnaryOperation()  )
@@ -421,13 +379,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 */
 	private Hop removeUnnecessaryReorgOperation(Hop parent, Hop hi, int pos)
 	{
 		if( hi instanceof ReorgOp ) 
@@ -456,13 +407,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 */
 	private Hop removeUnnecessaryOuterProduct(Hop parent, Hop hi, int pos)
 	{
 		if( hi instanceof BinaryOp  ) //binary cell operation 
@@ -511,13 +455,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 */
 	@SuppressWarnings("unchecked")
 	private Hop fuseDatagenAndReorgOperation(Hop parent, Hop hi, int pos)
 	{
@@ -556,14 +493,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException 
-	 */
 	@SuppressWarnings("unchecked")
 	private Hop simplifyColwiseAggregate( Hop parent, Hop hi, int pos ) 
 		throws HopsException
@@ -601,7 +530,9 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 							// All other valid column aggregations over a row vector will result
 							// in the row vector itself.
 							// Therefore, remove unnecessary col aggregation for 1 row.
-							HopRewriteUtils.removeChildReference(parent, hi);
+							HopRewriteUtils.removeChildReferenceByPos(parent, hi, pos);
+							if( hi.getParent().isEmpty() ) //no remaining consumers
+								HopRewriteUtils.removeChildReference(hi, input);
 							HopRewriteUtils.addChildReference(parent, input, pos);
 							parent.refreshSizeInformation();
 
@@ -643,14 +574,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	@SuppressWarnings("unchecked")
 	private Hop simplifyRowwiseAggregate( Hop parent, Hop hi, int pos ) 
 		throws HopsException
@@ -689,7 +612,9 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 							// All other valid row aggregations over a column vector will result
 							// in the column vector itself.
 							// Therefore, remove unnecessary row aggregation for 1 col
-							HopRewriteUtils.removeChildReference(parent, hi);
+							HopRewriteUtils.removeChildReferenceByPos(parent, hi, pos);
+							if( hi.getParent().isEmpty() ) //no remaining consumers
+								HopRewriteUtils.removeChildReference(hi, input);
 							HopRewriteUtils.addChildReference(parent, input, pos);
 							parent.refreshSizeInformation();
 
@@ -731,14 +656,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyColSumsMVMult( Hop parent, Hop hi, int pos ) 
 		throws HopsException
 	{
@@ -785,14 +702,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyRowSumsMVMult( Hop parent, Hop hi, int pos ) 
 		throws HopsException
 	{
@@ -839,14 +748,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyUnnecessaryAggregate(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -876,14 +777,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyEmptyAggregate(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -920,14 +813,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyEmptyUnaryOperation(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -958,14 +843,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyEmptyReorgOperation(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -1010,14 +887,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyEmptySortOperation(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -1059,14 +928,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyEmptyMatrixMult(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -1095,14 +956,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyIdentityRepMatrixMult(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -1127,14 +980,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyScalarMatrixMult(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -1196,14 +1041,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyMatrixMultDiag(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -1277,13 +1114,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 */
 	private Hop simplifyDiagMatrixMult(Hop parent, Hop hi, int pos)
 	{
 		if( hi instanceof ReorgOp && ((ReorgOp)hi).getOp()==ReOrgOp.DIAG && hi.getDim2()==1 ) //diagM2V
@@ -1331,11 +1161,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-
-	/**
-	 * 
-	 * @param hi
-	 */
 	private Hop simplifySumDiagToTrace(Hop hi)
 	{
 		if( hi instanceof AggUnaryOp ) 
@@ -1368,13 +1193,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 */
 	@SuppressWarnings("unchecked")
 	private Hop pushdownBinaryOperationOnDiag(Hop parent, Hop hi, int pos) 
 	{
@@ -1454,10 +1272,10 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	/**
 	 * patterns: sum(A+B)->sum(A)+sum(B); sum(A-B)->sum(A)-sum(B)
 	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
+	 * @param parent the parent high-level operator
+	 * @param hi high-level operator
+	 * @param pos position
+	 * @return high-level operator
 	 */
 	private Hop pushdownSumOnAdditiveBinary(Hop parent, Hop hi, int pos) 
 	{
@@ -1521,11 +1339,11 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	 * rewrite because this is an uncommon case. Also, the intention is to remove this constaint as soon
 	 * as we generalized the runtime or hop/lop compilation. 
 	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException 
+	 * @param parent parent high-level operator
+	 * @param hi high-level operator
+	 * @param pos position
+	 * @return high-level operator
+	 * @throws HopsException if HopsException occurs
 	 */
 	private Hop simplifyWeightedSquaredLoss(Hop parent, Hop hi, int pos) 
 		throws HopsException
@@ -1719,14 +1537,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyWeightedSigmoidMMChains(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -1865,14 +1675,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyWeightedDivMM(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -2181,14 +1983,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyWeightedCrossEntropy(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -2268,14 +2062,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyWeightedUnaryMM(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -2382,11 +2168,11 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	 * a%*%b on MR can be also counter-productive (e.g., MMCJ) while tsmm is always 
 	 * beneficial. 
 	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException 
+	 * @param parent parent high-level operator
+	 * @param hi high-level operator
+	 * @param pos position
+	 * @return high-level operator
+	 * @throws HopsException if HopsException occurs
 	 */
 	private Hop simplifyDotProductSum(Hop parent, Hop hi, int pos) 
 		throws HopsException
@@ -2463,7 +2249,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	 *
 	 * @return Either hi or the rewritten HOP replacing it.
 	 *
-	 * @throws HopsException
+	 * @throws HopsException if HopsException occurs
 	 */
 	private Hop fuseSumSquared(Hop parent, Hop hi, int pos)
 			throws HopsException {
@@ -2505,15 +2291,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop fuseAxpyBinaryOperationChain(Hop parent, Hop hi, int pos) 
 	{
 		//patterns: (a) X + s*Y -> X +* sY, (b) s*Y+X -> X +* sY, (c) X - s*Y -> X -* sY		
@@ -2532,7 +2309,8 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			{
 				Hop smid = right.getInput().get( (right.getInput().get(0).getDataType()==DataType.SCALAR) ? 0 : 1); 
 				Hop mright = right.getInput().get( (right.getInput().get(0).getDataType()==DataType.SCALAR) ? 1 : 0);
-				ternop = HopRewriteUtils.createTernaryOp(left, smid, mright, OpOp3.PLUS_MULT);
+				ternop = (smid instanceof LiteralOp && HopRewriteUtils.getDoubleValueSafe((LiteralOp)smid)==0) ? 
+						left : HopRewriteUtils.createTernaryOp(left, smid, mright, OpOp3.PLUS_MULT);
 				LOG.debug("Applied fuseAxpyBinaryOperationChain1. (line " +hi.getBeginLine()+")");
 			}
 			//pattern (b) s*Y + X -> X +* sY
@@ -2543,7 +2321,8 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			{
 				Hop smid = left.getInput().get( (left.getInput().get(0).getDataType()==DataType.SCALAR) ? 0 : 1); 
 				Hop mright = left.getInput().get( (left.getInput().get(0).getDataType()==DataType.SCALAR) ? 1 : 0);
-				ternop = HopRewriteUtils.createTernaryOp(right, smid, mright, OpOp3.PLUS_MULT);
+				ternop = (smid instanceof LiteralOp && HopRewriteUtils.getDoubleValueSafe((LiteralOp)smid)==0) ? 
+						right : HopRewriteUtils.createTernaryOp(right, smid, mright, OpOp3.PLUS_MULT);
 				LOG.debug("Applied fuseAxpyBinaryOperationChain2. (line " +hi.getBeginLine()+")");	
 			}
 			//pattern (c) X - s*Y -> X -* sY
@@ -2553,7 +2332,8 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			{
 				Hop smid = right.getInput().get( (right.getInput().get(0).getDataType()==DataType.SCALAR) ? 0 : 1); 
 				Hop mright = right.getInput().get( (right.getInput().get(0).getDataType()==DataType.SCALAR) ? 1 : 0);
-				ternop = HopRewriteUtils.createTernaryOp(left, smid, mright, OpOp3.MINUS_MULT);
+				ternop = (smid instanceof LiteralOp && HopRewriteUtils.getDoubleValueSafe((LiteralOp)smid)==0) ? 
+						left : HopRewriteUtils.createTernaryOp(left, smid, mright, OpOp3.MINUS_MULT);
 				LOG.debug("Applied fuseAxpyBinaryOperationChain3. (line " +hi.getBeginLine()+")");
 			}
 			
@@ -2568,14 +2348,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyEmptyBinaryOperation(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{
@@ -2659,11 +2431,11 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	 * NOTE: in this rewrite we need to modify the links to all parents because we 
 	 * remove existing links of subdags and hence affect all consumers.
 	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException 
+	 * @param parent the parent high-level operator
+	 * @param hi high-level operator
+	 * @param pos position
+	 * @return high-level operator
+	 * @throws HopsException if HopsException occurs
 	 */
 	@SuppressWarnings("unchecked")
 	private Hop reorderMinusMatrixMult(Hop parent, Hop hi, int pos) 
@@ -2754,13 +2526,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	}
 
 
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 */
 	private Hop simplifySumMatrixMult(Hop parent, Hop hi, int pos)
 	{
 		//sum(A%*%B) -> sum(t(colSums(A))*rowSums(B))
@@ -2809,12 +2574,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param hi
-	 * @return
-	 * @throws HopsException
-	 */
 	private Hop simplifyScalarMVBinaryOperation(Hop hi) 
 		throws HopsException
 	{
@@ -2841,14 +2600,6 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 	
-	/**
-	 * 
-	 * @param parent
-	 * @param hi
-	 * @param pos
-	 * @return
-	 * @throws HopsException 
-	 */
 	private Hop simplifyNnzComputation(Hop parent, Hop hi, int pos) 
 		throws HopsException
 	{

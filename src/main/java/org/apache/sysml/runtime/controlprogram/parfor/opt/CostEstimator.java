@@ -46,16 +46,16 @@ public abstract class CostEstimator
 	public static final long   FACTOR_NUM_ITERATIONS   = 10; //default problem size
 	public static final double DEFAULT_TIME_ESTIMATE   = 5;  //default execution time: 5ms
 	public static final double DEFAULT_MEM_ESTIMATE_CP = 1024; //default memory consumption: 1KB 
-	public static final double DEFAULT_MEM_ESTIMATE_MR = 10*1024*1024; //default memory consumption: 20MB 
+	public static final double DEFAULT_MEM_ESTIMATE_MR = 10*1024*1024; //default memory consumption: 20MB // TODO investigate unused constant
 	
 	
 	/**
 	 * Main leaf node estimation method - to be overwritten by specific cost estimators
 	 * 
-	 * @param measure
-	 * @param node
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param measure ?
+	 * @param node internal representation of a plan alternative for program blocks and instructions
+	 * @return estimate?
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	public abstract double getLeafNodeEstimate( TestMeasure measure, OptNode node ) 
 		throws DMLRuntimeException;
@@ -63,11 +63,11 @@ public abstract class CostEstimator
 	/**
 	 * Main leaf node estimation method - to be overwritten by specific cost estimators
 	 * 
-	 * @param measure
-	 * @param node
-	 * @param et 	forced execution type for leaf node 
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param measure ?
+	 * @param node internal representation of a plan alternative for program blocks and instructions
+	 * @param et forced execution type for leaf node 
+	 * @return estimate?
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	public abstract double getLeafNodeEstimate( TestMeasure measure, OptNode node, ExecType et ) 
 		throws DMLRuntimeException;
@@ -80,10 +80,10 @@ public abstract class CostEstimator
 	/**
 	 * Main estimation method.
 	 * 
-	 * @param measure
-	 * @param node
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param measure ?
+	 * @param node internal representation of a plan alternative for program blocks and instructions
+	 * @return estimate?
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	public double getEstimate( TestMeasure measure, OptNode node ) 
 		throws DMLRuntimeException
@@ -94,10 +94,11 @@ public abstract class CostEstimator
 	/**
 	 * Main estimation method.
 	 * 
-	 * @param measure
-	 * @param node
-	 * @return
-	 * @throws DMLRuntimeException
+	 * @param measure ?
+	 * @param node internal representation of a plan alternative for program blocks and instructions
+	 * @param et execution type
+	 * @return estimate?
+	 * @throws DMLRuntimeException if DMLRuntimeException occurs
 	 */
 	public double getEstimate( TestMeasure measure, OptNode node, ExecType et ) 
 		throws DMLRuntimeException
@@ -177,45 +178,6 @@ public abstract class CostEstimator
 		return val;
 	}
 
-	
-	/**
-	 * 
-	 * @param plan
-	 * @param n
-	 * @return
-	 */
-	public double computeLocalParBound(OptTree plan, OptNode n) 
-	{
-		return Math.floor(rComputeLocalValueBound(plan.getRoot(), n, plan.getCK()));		
-	}
-
-	/**
-	 * 
-	 * @param plan
-	 * @param n
-	 * @return
-	 */
-	public double computeLocalMemoryBound(OptTree plan, OptNode n) 
-	{
-		return rComputeLocalValueBound(plan.getRoot(), n, plan.getCM());
-	}
-	
-	/**
-	 * 
-	 * @param pn
-	 * @return
-	 */
-	public double getMinMemoryUsage(OptNode pn) 
-	{
-		// TODO implement for DP enum optimizer
-		throw new RuntimeException("Not implemented yet.");
-	}
-	
-	/**
-	 * 
-	 * @param measure
-	 * @return
-	 */
 	protected double getDefaultEstimate(TestMeasure measure) 
 	{
 		double val = -1;
@@ -228,14 +190,7 @@ public abstract class CostEstimator
 		
 		return val;
 	}
-	
-	/**
-	 * 
-	 * @param measure
-	 * @param nodes
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	protected double getMaxEstimate( TestMeasure measure, ArrayList<OptNode> nodes, ExecType et ) 
 		throws DMLRuntimeException
 	{
@@ -248,14 +203,7 @@ public abstract class CostEstimator
 		}
 		return max;
 	}
-	
-	/**
-	 * 
-	 * @param measure
-	 * @param nodes
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	protected double getSumEstimate( TestMeasure measure, ArrayList<OptNode> nodes, ExecType et ) 
 		throws DMLRuntimeException
 	{
@@ -264,14 +212,7 @@ public abstract class CostEstimator
 			sum += getEstimate( measure, n, et );
 		return sum;	
 	}
-	
-	/**
-	 * 
-	 * @param measure
-	 * @param nodes
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
+
 	protected double getWeightedEstimate( TestMeasure measure, ArrayList<OptNode> nodes, ExecType et ) 
 		throws DMLRuntimeException 
 	{
@@ -282,51 +223,4 @@ public abstract class CostEstimator
 		ret /= len; //weighting
 		return ret;
 	}
-
-	
-	/**
-	 * 
-	 * @param current
-	 * @param node
-	 * @param currentVal
-	 * @return
-	 */
-	protected double rComputeLocalValueBound( OptNode current, OptNode node, double currentVal )
-	{
-		if( current == node ) //found node
-			return currentVal;
-		else if( current.isLeaf() ) //node not here
-			return -1; 
-		else
-		{
-			switch( current.getNodeType() )
-			{
-				case GENERIC:
-				case FUNCCALL:
-				case IF:
-				case WHILE:
-				case FOR:
-					for( OptNode c : current.getChilds() ) 
-					{
-						double lval = rComputeLocalValueBound(c, node, currentVal);
-						if( lval > 0 )
-							return lval;
-					}
-					break;
-				case PARFOR:
-					for( OptNode c : current.getChilds() ) 
-					{
-						double lval = rComputeLocalValueBound(c, node, currentVal/current.getK());
-						if( lval > 0 )
-							return lval;
-					}
-					break;
-				default:
-					//do nothing
-			}
-		}
-			
-		return -1;
-	}
-
 }

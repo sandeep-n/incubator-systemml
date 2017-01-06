@@ -39,6 +39,7 @@ import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.instructions.MRJobInstruction;
 import org.apache.sysml.runtime.instructions.cp.FunctionCallCPInstruction;
 import org.apache.sysml.runtime.instructions.spark.SPInstruction;
+import org.apache.sysml.runtime.matrix.data.LibMatrixDNN;
 
 /**
  * This class captures all statistics.
@@ -47,11 +48,11 @@ public class Statistics
 {	
 	private static long compileStartTime = 0;
 	private static long compileEndTime = 0;
-	public static long compileTime = 0;
+	public static long compileTime = 0; // TODO investigate unused field
 	
 	private static long execStartTime = 0;
 	private static long execEndTime = 0;
-	public static long execTime = 0;
+	public static long execTime = 0; // TODO investigate unused field
 
 	// number of compiled/executed MR jobs
 	private static int iNoOfExecutedMRJobs = 0;
@@ -100,12 +101,10 @@ public class Statistics
 	private static AtomicLong lTotalLix = new AtomicLong(0);
 	private static AtomicLong lTotalLixUIP = new AtomicLong(0);
 	
-	
-	private static AtomicLong denseBlockAllocationTime = new AtomicLong(0);
-	private static AtomicLong sparseBlockAllocationTime = new AtomicLong(0);
-	
 	public static long cudaInitTime = 0;
 	public static long cudaLibrariesInitTime = 0;
+	public static AtomicLong cudaConversionTime = new AtomicLong(0);	// Measures time spent in converting between sparse block types
+	public static AtomicLong cudaConversionCount = new AtomicLong(0);
 	public static AtomicLong cudaAllocTime = new AtomicLong(0);
 	public static AtomicLong cudaDeAllocTime = new AtomicLong(0);
 	public static AtomicLong cudaToDevTime = new AtomicLong(0);
@@ -115,13 +114,6 @@ public class Statistics
 	public static AtomicLong cudaToDevCount = new AtomicLong(0);
 	public static AtomicLong cudaFromDevCount = new AtomicLong(0);
 	public static AtomicLong cudaEvictionCount = new AtomicLong(0);
-	
-	public static void incrementAllocationTime(long allocationTime, boolean isSparse) {
-		if(isSparse)
-			sparseBlockAllocationTime.addAndGet(allocationTime);
-		else
-			denseBlockAllocationTime.addAndGet(allocationTime);
-	}
 	
 	public static synchronized void setNoOfExecutedMRJobs(int iNoOfExecutedMRJobs) {
 		Statistics.iNoOfExecutedMRJobs = iNoOfExecutedMRJobs;
@@ -215,11 +207,7 @@ public class Statistics
 	public static void incrementTotalLix() {
 		lTotalLix.incrementAndGet();
 	}
-	
-	/**
-	 * 
-	 * @param count
-	 */
+
 	public static void resetNoOfCompiledJobs( int count )
 	{
 		//reset both mr/sp for multiple tests within one jvm
@@ -233,11 +221,7 @@ public class Statistics
 			setNoOfCompiledSPInst(0);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param count
-	 */
+
 	public static void resetNoOfExecutedJobs( int count )
 	{
 		//reset both mr/sp for multiple tests within one jvm
@@ -351,7 +335,7 @@ public class Statistics
 	/**
 	 * Returns the total time of run in nanoseconds.
 	 * 
-	 * @return
+	 * @return run time in nanoseconds
 	 */
 	public static long getRunTime() {
 		return execEndTime - execStartTime;
@@ -377,9 +361,6 @@ public class Statistics
 		resetJVMgcCount();
 		resetCPHeavyHitters();
 		
-		denseBlockAllocationTime.set(0);
-		sparseBlockAllocationTime.set(0);
-		
 		cudaInitTime = 0;
 		cudaLibrariesInitTime = 0;
 		cudaAllocTime.set(0);
@@ -391,11 +372,9 @@ public class Statistics
 		cudaToDevCount.set(0);
 		cudaFromDevCount.set(0);
 		cudaEvictionCount.set(0);
+		LibMatrixDNN.resetStatistics();
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static void resetJITCompileTime(){
 		jitCompileTime = -1 * getJITCompileTime();
 	}
@@ -407,19 +386,12 @@ public class Statistics
 	public static void resetJVMgcCount(){
 		jvmGCTime = -1 * getJVMgcCount();
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static void resetCPHeavyHitters(){
 		_cpInstTime.clear();
 		_cpInstCounts.clear();
 	}
-	
-	/**
-	 * 
-	 * @param ns
-	 */
+
 	public static void setSparkCtxCreateTime(long ns) {
 		sparkCtxCreateTime = ns;
 	}
@@ -495,12 +467,7 @@ public class Statistics
 	{
 		return _cpInstTime.keySet();
 	}
-	
-	/**
-	 * 
-	 * @param num
-	 * @return
-	 */
+
 	@SuppressWarnings("unchecked")
 	public static String getHeavyHitters( int num )
 	{
@@ -535,7 +502,7 @@ public class Statistics
 	/**
 	 * Returns the total time of asynchronous JIT compilation in milliseconds.
 	 * 
-	 * @return
+	 * @return JIT compile time
 	 */
 	public static long getJITCompileTime(){
 		long ret = -1; //unsupported
@@ -611,11 +578,19 @@ public class Statistics
 	}
 
 	/**
-	 * Prints statistics.
-	 * 
-	 * @return
+	 * Returns statistics of the DML program that was recently completed as a string
+	 * @return statistics as a string
 	 */
-	public static String display() 
+	public static String display() {
+		return display(DMLScript.STATISTICS_COUNT);
+	}
+
+	/**
+	 * Returns statistics as a string
+	 * @param maxHeavyHitters The maximum number of heavy hitters that are printed
+	 * @return statistics as string
+	 */
+	public static String display(int maxHeavyHitters)
 	{
 		StringBuilder sb = new StringBuilder();
 		
@@ -640,14 +615,16 @@ public class Statistics
 			sb.append("CUDA/CuLibraries init time:\t" + String.format("%.3f", cudaInitTime*1e-9) + "/"
 					+ String.format("%.3f", cudaLibrariesInitTime*1e-9) + " sec.\n");
 			sb.append("Number of executed GPU inst:\t" + getNoOfExecutedGPUInst() + ".\n");
-			sb.append("GPU mem tx time (alloc/dealloc/toDev/fromDev):\t" 
+			sb.append("GPU mem tx time (alloc/dealloc/conversion/toDev/fromDev):\t" 
 					+ String.format("%.3f", cudaAllocTime.get()*1e-9) + "/"
 					+ String.format("%.3f", cudaDeAllocTime.get()*1e-9) + "/"
+					+ String.format("%.3f", cudaConversionTime.get()*1e-9) + "/"
 					+ String.format("%.3f", cudaToDevTime.get()*1e-9) + "/"
 					+ String.format("%.3f", cudaFromDevTime.get()*1e-9)  + " sec.\n");
-			sb.append("GPU mem tx count (alloc/dealloc/toDev/fromDev/evict):\t" 
+			sb.append("GPU mem tx count (alloc/dealloc/conversion/toDev/fromDev/evict):\t" 
 					+ cudaAllocCount.get() + "/"
 					+ cudaDeAllocCount.get() + "/"
+					+ cudaConversionCount.get() + "/"
 					+ cudaToDevCount.get() + "/"
 					+ cudaFromDevCount.get() + "/"
 					+ cudaEvictionCount.get() + ".\n");
@@ -659,10 +636,6 @@ public class Statistics
 			sb.append("Cache hits (Mem, WB, FS, HDFS):\t" + CacheStatistics.displayHits() + ".\n");
 			sb.append("Cache writes (WB, FS, HDFS):\t" + CacheStatistics.displayWrites() + ".\n");
 			sb.append("Cache times (ACQr/m, RLS, EXP):\t" + CacheStatistics.displayTime() + " sec.\n");
-			if(DMLScript.REUSE_NONZEROED_OUTPUT) {
-				sb.append("Allocation time (Dense/Sparse):\t" + String.format("%.3f", denseBlockAllocationTime.doubleValue()/1000000000) 
-						+ "/" + String.format("%.3f", sparseBlockAllocationTime.doubleValue()/1000000000)  + " sec.\n");
-			}
 			sb.append("HOP DAGs recompiled (PRED, SB):\t" + getHopRecompiledPredDAGs() + "/" + getHopRecompiledSBDAGs() + ".\n");
 			sb.append("HOP DAGs recompile time:\t" + String.format("%.3f", ((double)getHopRecompileTime())/1000000000) + " sec.\n");
 			if( getFunRecompiles()>0 ) {
@@ -692,7 +665,8 @@ public class Statistics
 			sb.append("Total JIT compile time:\t\t" + ((double)getJITCompileTime())/1000 + " sec.\n");
 			sb.append("Total JVM GC count:\t\t" + getJVMgcCount() + ".\n");
 			sb.append("Total JVM GC time:\t\t" + ((double)getJVMgcTime())/1000 + " sec.\n");
-			sb.append("Heavy hitter instructions (name, time, count):\n" + getHeavyHitters(10));
+			LibMatrixDNN.appendStatistics(sb);
+			sb.append("Heavy hitter instructions (name, time, count):\n" + getHeavyHitters(maxHeavyHitters));
 		}
 		
 		return sb.toString();

@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -29,7 +29,7 @@ import java.util.Map.Entry;
 import java.util.Set;
 
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
-import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
+import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysml.runtime.instructions.cp.Data;
 
 import scala.Tuple2;
@@ -67,9 +67,9 @@ public class Script {
 	 */
 	private Set<String> inputVariables = new LinkedHashSet<String>();
 	/**
-	 * The input matrix metadata if present.
+	 * The input matrix or frame metadata if present.
 	 */
-	private Map<String, MatrixMetadata> inputMatrixMetadata = new LinkedHashMap<String, MatrixMetadata>();
+	private Map<String, Metadata> inputMetadata = new LinkedHashMap<String, Metadata>();
 	/**
 	 * The output variables.
 	 */
@@ -97,7 +97,7 @@ public class Script {
 	/**
 	 * Script constructor, specifying the type of script ({@code ScriptType.DML}
 	 * or {@code ScriptType.PYDML}).
-	 * 
+	 *
 	 * @param scriptType
 	 *            {@code ScriptType.DML} or {@code ScriptType.PYDML}
 	 */
@@ -108,7 +108,7 @@ public class Script {
 	/**
 	 * Script constructor, specifying the script content. By default, the script
 	 * type is DML.
-	 * 
+	 *
 	 * @param scriptString
 	 *            the script content as a string
 	 */
@@ -120,7 +120,7 @@ public class Script {
 	/**
 	 * Script constructor, specifying the script content and the type of script
 	 * (DML or PYDML).
-	 * 
+	 *
 	 * @param scriptString
 	 *            the script content as a string
 	 * @param scriptType
@@ -133,7 +133,7 @@ public class Script {
 
 	/**
 	 * Obtain the script type.
-	 * 
+	 *
 	 * @return {@code ScriptType.DML} or {@code ScriptType.PYDML}
 	 */
 	public ScriptType getScriptType() {
@@ -142,7 +142,7 @@ public class Script {
 
 	/**
 	 * Set the type of script (DML or PYDML).
-	 * 
+	 *
 	 * @param scriptType
 	 *            {@code ScriptType.DML} or {@code ScriptType.PYDML}
 	 */
@@ -152,7 +152,7 @@ public class Script {
 
 	/**
 	 * Obtain the script string.
-	 * 
+	 *
 	 * @return the script string
 	 */
 	public String getScriptString() {
@@ -161,7 +161,7 @@ public class Script {
 
 	/**
 	 * Set the script string.
-	 * 
+	 *
 	 * @param scriptString
 	 *            the script string
 	 * @return {@code this} Script object to allow chaining of methods
@@ -173,7 +173,7 @@ public class Script {
 
 	/**
 	 * Obtain the input variable names as an unmodifiable set of strings.
-	 * 
+	 *
 	 * @return the input variable names
 	 */
 	public Set<String> getInputVariables() {
@@ -182,7 +182,7 @@ public class Script {
 
 	/**
 	 * Obtain the output variable names as an unmodifiable set of strings.
-	 * 
+	 *
 	 * @return the output variable names
 	 */
 	public Set<String> getOutputVariables() {
@@ -192,7 +192,7 @@ public class Script {
 	/**
 	 * Obtain the symbol table, which is essentially a
 	 * {@code HashMap<String, Data>} representing variables and their values.
-	 * 
+	 *
 	 * @return the symbol table
 	 */
 	public LocalVariableMap getSymbolTable() {
@@ -201,7 +201,7 @@ public class Script {
 
 	/**
 	 * Obtain an unmodifiable map of all inputs (parameters ($) and variables).
-	 * 
+	 *
 	 * @return all inputs to the script
 	 */
 	public Map<String, Object> getInputs() {
@@ -209,17 +209,17 @@ public class Script {
 	}
 
 	/**
-	 * Obtain an unmodifiable map of input matrix metadata.
-	 * 
-	 * @return input matrix metadata
+	 * Obtain an unmodifiable map of input matrix/frame metadata.
+	 *
+	 * @return input matrix/frame metadata
 	 */
-	public Map<String, MatrixMetadata> getInputMatrixMetadata() {
-		return Collections.unmodifiableMap(inputMatrixMetadata);
+	public Map<String, Metadata> getInputMetadata() {
+		return Collections.unmodifiableMap(inputMetadata);
 	}
 
 	/**
 	 * Pass a map of inputs to the script.
-	 * 
+	 *
 	 * @param inputs
 	 *            map of inputs (parameters ($) and variables).
 	 * @return {@code this} Script object to allow chaining of methods
@@ -234,13 +234,23 @@ public class Script {
 
 	/**
 	 * Pass a Scala Map of inputs to the script.
-	 * 
+	 * <p>
+	 * Note that the {@code Map} value type is not explicitly specified on this
+	 * method because {@code [String, Any]} can't be recognized on the Java side
+	 * since {@code Any} doesn't have an equivalent in the Java class hierarchy
+	 * ({@code scala.Any} is a superclass of {@code scala.AnyRef}, which is
+	 * equivalent to {@code java.lang.Object}). Therefore, specifying
+	 * {@code scala.collection.Map<String, Object>} as an input parameter to
+	 * this Java method is not encompassing enough and would require types such
+	 * as a {@code scala.Double} to be cast using {@code asInstanceOf[AnyRef]}.
+	 *
 	 * @param inputs
 	 *            Scala Map of inputs (parameters ($) and variables).
 	 * @return {@code this} Script object to allow chaining of methods
 	 */
-	public Script in(scala.collection.Map<String, Object> inputs) {
-		Map<String, Object> javaMap = JavaConversions.mapAsJavaMap(inputs);
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public Script in(scala.collection.Map<String, ?> inputs) {
+		Map javaMap = JavaConversions.mapAsJavaMap(inputs);
 		in(javaMap);
 
 		return this;
@@ -251,7 +261,7 @@ public class Script {
 	 * or three-value tuples, where the first value is the variable name, the
 	 * second value is the variable value, and the third optional value is the
 	 * metadata.
-	 * 
+	 *
 	 * @param inputs
 	 *            Scala Seq of inputs (parameters ($) and variables).
 	 * @return {@code this} Script object to allow chaining of methods
@@ -276,7 +286,7 @@ public class Script {
 
 	/**
 	 * Obtain an unmodifiable map of all input parameters ($).
-	 * 
+	 *
 	 * @return input parameters ($)
 	 */
 	public Map<String, Object> getInputParameters() {
@@ -285,7 +295,7 @@ public class Script {
 
 	/**
 	 * Register an input (parameter ($) or variable).
-	 * 
+	 *
 	 * @param name
 	 *            name of the input
 	 * @param value
@@ -299,16 +309,16 @@ public class Script {
 	/**
 	 * Register an input (parameter ($) or variable) with optional matrix
 	 * metadata.
-	 * 
+	 *
 	 * @param name
 	 *            name of the input
 	 * @param value
 	 *            value of the input
-	 * @param matrixMetadata
-	 *            optional matrix metadata
+	 * @param metadata
+	 *            optional matrix/frame metadata
 	 * @return {@code this} Script object to allow chaining of methods
 	 */
-	public Script in(String name, Object value, MatrixMetadata matrixMetadata) {
+	public Script in(String name, Object value, Metadata metadata) {
 		MLContextUtil.checkInputValueType(name, value);
 		if (inputs == null) {
 			inputs = new LinkedHashMap<String, Object>();
@@ -321,15 +331,19 @@ public class Script {
 				inputParameters = new LinkedHashMap<String, Object>();
 			}
 			inputParameters.put(name, value);
-		} else {
-			Data data = MLContextUtil.convertInputType(name, value, matrixMetadata);
+		} 
+		else {
+			Data data = MLContextUtil.convertInputType(name, value, metadata);
 			if (data != null) {
+				//store input variable name and data
 				symbolTable.put(name, data);
 				inputVariables.add(name);
-				if (data instanceof MatrixObject) {
-					if (matrixMetadata != null) {
-						inputMatrixMetadata.put(name, matrixMetadata);
-					}
+				
+				//store matrix/frame meta data and disable variable cleanup
+				if( data instanceof CacheableData ) {
+					if( metadata != null )
+						inputMetadata.put(name, metadata);
+					((CacheableData<?>)data).enableCleanup(false);
 				}
 			}
 		}
@@ -338,7 +352,7 @@ public class Script {
 
 	/**
 	 * Register an output variable.
-	 * 
+	 *
 	 * @param outputName
 	 *            name of the output variable
 	 * @return {@code this} Script object to allow chaining of methods
@@ -350,7 +364,7 @@ public class Script {
 
 	/**
 	 * Register output variables.
-	 * 
+	 *
 	 * @param outputNames
 	 *            names of the output variables
 	 * @return {@code this} Script object to allow chaining of methods
@@ -392,7 +406,7 @@ public class Script {
 		inputs.clear();
 		inputParameters.clear();
 		inputVariables.clear();
-		inputMatrixMetadata.clear();
+		inputMetadata.clear();
 	}
 
 	/**
@@ -411,7 +425,7 @@ public class Script {
 
 	/**
 	 * Obtain the results of the script execution.
-	 * 
+	 *
 	 * @return the results of the script execution.
 	 */
 	public MLResults results() {
@@ -420,7 +434,7 @@ public class Script {
 
 	/**
 	 * Obtain the results of the script execution.
-	 * 
+	 *
 	 * @return the results of the script execution.
 	 */
 	public MLResults getResults() {
@@ -429,7 +443,7 @@ public class Script {
 
 	/**
 	 * Set the results of the script execution.
-	 * 
+	 *
 	 * @param results
 	 *            the results of the script execution.
 	 */
@@ -439,7 +453,7 @@ public class Script {
 
 	/**
 	 * Obtain the script executor used by this Script.
-	 * 
+	 *
 	 * @return the ScriptExecutor used by this Script.
 	 */
 	public ScriptExecutor getScriptExecutor() {
@@ -448,7 +462,7 @@ public class Script {
 
 	/**
 	 * Set the ScriptExecutor used by this Script.
-	 * 
+	 *
 	 * @param scriptExecutor
 	 *            the script executor
 	 */
@@ -458,7 +472,7 @@ public class Script {
 
 	/**
 	 * Is the script type DML?
-	 * 
+	 *
 	 * @return {@code true} if the script type is DML, {@code false} otherwise
 	 */
 	public boolean isDML() {
@@ -467,7 +481,7 @@ public class Script {
 
 	/**
 	 * Is the script type PYDML?
-	 * 
+	 *
 	 * @return {@code true} if the script type is PYDML, {@code false} otherwise
 	 */
 	public boolean isPYDML() {
@@ -477,7 +491,7 @@ public class Script {
 	/**
 	 * Generate the script execution string, which adds read/load/write/save
 	 * statements to the beginning and end of the script to execute.
-	 * 
+	 *
 	 * @return the script execution string
 	 */
 	public String getScriptExecutionString() {
@@ -492,7 +506,9 @@ public class Script {
 					String quotedString = MLContextUtil.quotedString((String) inValue);
 					sb.append(" = " + quotedString + ";\n");
 				} else if (MLContextUtil.isBasicType(inValue)) {
-					sb.append(" = read('', data_type='scalar');\n");
+					sb.append(" = read('', data_type='scalar', value_type='" + MLContextUtil.getBasicTypeString(inValue) + "');\n");
+				} else if (MLContextUtil.doesSymbolTableContainFrameObject(symbolTable, in)) {
+					sb.append(" = read('', data_type='frame');\n");
 				} else {
 					sb.append(" = read('');\n");
 				}
@@ -501,7 +517,9 @@ public class Script {
 					String quotedString = MLContextUtil.quotedString((String) inValue);
 					sb.append(" = " + quotedString + "\n");
 				} else if (MLContextUtil.isBasicType(inValue)) {
-					sb.append(" = load('', data_type='scalar')\n");
+					sb.append(" = load('', data_type='scalar', value_type='" + MLContextUtil.getBasicTypeString(inValue) + "')\n");
+				} else if (MLContextUtil.doesSymbolTableContainFrameObject(symbolTable, in)) {
+					sb.append(" = load('', data_type='frame')\n");
 				} else {
 					sb.append(" = load('')\n");
 				}
@@ -534,7 +552,7 @@ public class Script {
 	public String toString() {
 		StringBuilder sb = new StringBuilder();
 
-		sb.append(MLContextUtil.displayInputs("Inputs", inputs));
+		sb.append(MLContextUtil.displayInputs("Inputs", inputs, symbolTable));
 		sb.append("\n");
 		sb.append(MLContextUtil.displayOutputs("Outputs", outputVariables, symbolTable));
 		return sb.toString();
@@ -545,7 +563,7 @@ public class Script {
 	 * script type, inputs, outputs, input parameters, input variables, output
 	 * variables, the symbol table, the script string, and the script execution
 	 * string.
-	 * 
+	 *
 	 * @return information about this script as a String
 	 */
 	public String info() {
@@ -554,7 +572,7 @@ public class Script {
 		sb.append("Script Type: ");
 		sb.append(scriptType);
 		sb.append("\n\n");
-		sb.append(MLContextUtil.displayInputs("Inputs", inputs));
+		sb.append(MLContextUtil.displayInputs("Inputs", inputs, symbolTable));
 		sb.append("\n");
 		sb.append(MLContextUtil.displayOutputs("Outputs", outputVariables, symbolTable));
 		sb.append("\n");
@@ -576,16 +594,16 @@ public class Script {
 
 	/**
 	 * Display the script inputs.
-	 * 
+	 *
 	 * @return the script inputs
 	 */
 	public String displayInputs() {
-		return MLContextUtil.displayInputs("Inputs", inputs);
+		return MLContextUtil.displayInputs("Inputs", inputs, symbolTable);
 	}
 
 	/**
 	 * Display the script outputs.
-	 * 
+	 *
 	 * @return the script outputs as a String
 	 */
 	public String displayOutputs() {
@@ -594,7 +612,7 @@ public class Script {
 
 	/**
 	 * Display the script input parameters.
-	 * 
+	 *
 	 * @return the script input parameters as a String
 	 */
 	public String displayInputParameters() {
@@ -603,7 +621,7 @@ public class Script {
 
 	/**
 	 * Display the script input variables.
-	 * 
+	 *
 	 * @return the script input variables as a String
 	 */
 	public String displayInputVariables() {
@@ -612,7 +630,7 @@ public class Script {
 
 	/**
 	 * Display the script output variables.
-	 * 
+	 *
 	 * @return the script output variables as a String
 	 */
 	public String displayOutputVariables() {
@@ -621,7 +639,7 @@ public class Script {
 
 	/**
 	 * Display the script symbol table.
-	 * 
+	 *
 	 * @return the script symbol table as a String
 	 */
 	public String displaySymbolTable() {
@@ -630,7 +648,7 @@ public class Script {
 
 	/**
 	 * Obtain the script name.
-	 * 
+	 *
 	 * @return the script name
 	 */
 	public String getName() {
@@ -639,7 +657,7 @@ public class Script {
 
 	/**
 	 * Set the script name.
-	 * 
+	 *
 	 * @param name
 	 *            the script name
 	 * @return {@code this} Script object to allow chaining of methods

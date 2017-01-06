@@ -25,7 +25,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
-import java.util.List;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -85,21 +84,7 @@ public class MapReduceTool
 		// remove all the leading 0s
 		return String.valueOf(Long.parseLong(nodePrefix));
 	}
-	
-	@Deprecated
-	public static String getUniqueKeyPerTaskWithLeadingZros(JobConf job, boolean inMapper) {
-		String nodePrefix = job.get(MRConfigurationNames.MR_TASK_ATTEMPT_ID);
-		int i;
-		if (inMapper)
-			i = nodePrefix.indexOf("_m_");
-		else
-			i = nodePrefix.indexOf("_r_");
-		int j = nodePrefix.lastIndexOf("_");
-		nodePrefix = nodePrefix.substring(i + 3, j);
-		return nodePrefix;
-	}
 
-	
 	public static int getUniqueTaskId(JobConf job) {
 		//TODO: investigate ID pattern, required for parallel jobs
 		/*String nodePrefix = job.get(MRConfigurationNames.MR_TASK_ATTEMPT_ID); 
@@ -155,13 +140,6 @@ public class MapReduceTool
 			//System.err.println("Deleting " + outpath + " ... ");
 			fs.delete(outpath, true);
 		}
-	}
-
-	public static boolean isHDFSDirectory(String dir) throws IOException {
-		FileSystem fs = FileSystem.get(_rJob);
-		Path pth = new Path(dir);
-		FileStatus fstat = fs.getFileStatus(pth);
-		return fstat.isDirectory();
 	}
 
 	public static boolean isHDFSFileEmpty(String dir) throws IOException {
@@ -228,54 +206,11 @@ public class MapReduceTool
 	}
 
 	/**
-	 * 
-	 * @param dir
-	 * @return
-	 * @throws IOException
-	 */
-	public static String getSubDirs(String dir) 
-		throws IOException 
-	{
-		FileSystem fs = FileSystem.get(_rJob); 
-		FileStatus[] files = fs.listStatus(new Path(dir));
-		StringBuilder sb = new StringBuilder();
-		for (FileStatus file : files) {
-			if ( sb.length()>0 )
-				sb.append(",");
-			sb.append(file.getPath().toString());
-		}
-		return sb.toString();
-	}
-
-	/**
-	 * 
-	 * @param dir
-	 * @return
-	 * @throws IOException
-	 */
-	public static String getSubDirsIgnoreLogs(String dir) 
-		throws IOException 
-	{
-		FileSystem fs = FileSystem.get(_rJob);
-		FileStatus[] files = fs.listStatus(new Path(dir));
-		StringBuilder sb = new StringBuilder();
-		for (FileStatus file : files) {
-			String name = file.getPath().toString();
-			if (name.contains("_logs"))
-				continue;
-			if( sb.length()>0 )
-				sb.append(",");
-			sb.append(name);
-		}
-		return sb.toString();
-	}
-	
-	/**
 	 * Returns the size of a file or directory on hdfs in bytes.
 	 * 
-	 * @param path
-	 * @return
-	 * @throws IOException
+	 * @param path file system path
+	 * @return file size
+	 * @throws IOException if IOException occurs
 	 */
 	public static long getFilesizeOnHDFS( Path path ) 
 		throws IOException
@@ -432,7 +367,7 @@ public class MapReduceTool
 		writeMetaDataFile(mtdfile, vt, null, DataType.MATRIX, mc, outinfo);
 	}
 	
-	public static void writeMetaDataFile(String mtdfile, ValueType vt, List<ValueType> schema, DataType dt, MatrixCharacteristics mc, OutputInfo outinfo) 
+	public static void writeMetaDataFile(String mtdfile, ValueType vt, ValueType[] schema, DataType dt, MatrixCharacteristics mc, OutputInfo outinfo) 
 		throws IOException {
 		writeMetaDataFile(mtdfile, vt, schema, dt, mc, outinfo, null);
 	}
@@ -442,7 +377,7 @@ public class MapReduceTool
 		writeMetaDataFile(mtdfile, vt, null, DataType.MATRIX, mc, outinfo, formatProperties);
 	}
 	
-	public static void writeMetaDataFile(String mtdfile, ValueType vt, List<ValueType> schema, DataType dt, MatrixCharacteristics mc, 
+	public static void writeMetaDataFile(String mtdfile, ValueType vt, ValueType[] schema, DataType dt, MatrixCharacteristics mc, 
 			OutputInfo outinfo, FileFormatProperties formatProperties) 
 		throws IOException 
 	{
@@ -476,21 +411,8 @@ public class MapReduceTool
 			throw new IOException("Error creating and writing metadata JSON file", e);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param mtdfile
-	 * @param vt
-	 * @param schema
-	 * @param dt
-	 * @param mc
-	 * @param outinfo
-	 * @param formatProperties
-	 * @return
-	 * @throws JSONException 
-	 * @throws DMLRuntimeException 
-	 */
-	public static String metaDataToString(String mtdfile, ValueType vt, List<ValueType> schema, DataType dt, MatrixCharacteristics mc, 
+
+	public static String metaDataToString(String mtdfile, ValueType vt, ValueType[] schema, DataType dt, MatrixCharacteristics mc, 
 			OutputInfo outinfo, FileFormatProperties formatProperties) throws JSONException, DMLRuntimeException
 	{
 		OrderedJSONObject mtd = new OrderedJSONObject(); // maintain order in output file
@@ -502,11 +424,11 @@ public class MapReduceTool
 		}	
 		else {
 			StringBuffer schemaSB = new StringBuffer();
-			for(int i=0; i < schema.size(); i++) {
-				if( schema.get(i) == ValueType.UNKNOWN )
+			for(int i=0; i < schema.length; i++) {
+				if( schema[i] == ValueType.UNKNOWN )
 					schemaSB.append("*");
 				else
-					schemaSB.append(schema.get(i).toString());
+					schemaSB.append(schema[i].toString());
 				schemaSB.append(DataExpression.DEFAULT_DELIM_DELIMITER);
 			}
 			mtd.put(DataExpression.SCHEMAPARAM, schemaSB.toString());
@@ -647,25 +569,7 @@ public class MapReduceTool
 	    currentStream.close();
 		return new double[] {ret, (average ? -1 : readValue.get()), (average ? -1 : cum_weight)};
 	}
-	
-	/**
-	 * 
-	 * @param name
-	 * @return
-	 */
-	public static int extractNumberFromOutputFile(String name)
-	{
-		int i=name.indexOf("part-");
-		assert(i>=0);
-		return Integer.parseInt(name.substring(i+5));
-	}
-	
-	/**
-	 * 
-	 * @param dir
-	 * @param permissions
-	 * @throws IOException
-	 */
+
 	public static void createDirIfNotExistOnHDFS(String dir, String permissions) 
 		throws IOException
 	{
@@ -690,15 +594,7 @@ public class MapReduceTool
 		//NOTE: we depend on the configured umask, setting umask in job or fspermission has no effect
 		//similarly setting MRConfigurationNames.DFS_DATANODE_DATA_DIR_PERM as no effect either.
 	}
-	
-	
-	/**
-	 * 
-	 * @param filename
-	 * @param overwrite
-	 * @return
-	 * @throws IOException
-	 */
+
 	public static FSDataOutputStream getHDFSDataOutputStream(String filename, boolean overwrite) 
 		throws IOException
 	{

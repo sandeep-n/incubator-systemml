@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -24,9 +24,7 @@ import java.util.Set;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.DataFrame;
-import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.LocalVariableMap;
-import org.apache.sysml.runtime.controlprogram.caching.CacheException;
 import org.apache.sysml.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
@@ -37,8 +35,7 @@ import org.apache.sysml.runtime.instructions.cp.DoubleObject;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.instructions.cp.StringObject;
-import org.apache.sysml.runtime.matrix.data.FrameBlock;
-import org.apache.sysml.runtime.util.DataConverter;
+import org.apache.sysml.runtime.instructions.spark.utils.RDDConverterUtils;
 
 import scala.Tuple1;
 import scala.Tuple10;
@@ -92,7 +89,7 @@ public class MLResults {
 
 	/**
 	 * Obtain an output as a {@code Data} object.
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code Data} object
@@ -102,13 +99,12 @@ public class MLResults {
 		if (!keys.contains(outputName)) {
 			throw new MLContextException("Variable '" + outputName + "' not found");
 		}
-		Data data = symbolTable.get(outputName);
-		return data;
+		return symbolTable.get(outputName);
 	}
 
 	/**
 	 * Obtain an output as a {@code MatrixObject}
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code MatrixObject}
@@ -118,21 +114,34 @@ public class MLResults {
 		if (!(data instanceof MatrixObject)) {
 			throw new MLContextException("Variable '" + outputName + "' not a matrix");
 		}
-		MatrixObject mo = (MatrixObject) data;
-		return mo;
+		return (MatrixObject) data;
+	}
+
+	/**
+	 * Obtain an output as a {@code FrameObject}
+	 *
+	 * @param outputName
+	 *            the name of the output
+	 * @return the output as a {@code FrameObject}
+	 */
+	public FrameObject getFrameObject(String outputName) {
+		Data data = getData(outputName);
+		if (!(data instanceof FrameObject)) {
+			throw new MLContextException("Variable '" + outputName + "' not a frame");
+		}
+		return (FrameObject) data;
 	}
 
 	/**
 	 * Obtain an output as a two-dimensional {@code double} array.
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a two-dimensional {@code double} array
 	 */
-	public double[][] getDoubleMatrix(String outputName) {
+	public double[][] getMatrixAs2DDoubleArray(String outputName) {
 		MatrixObject mo = getMatrixObject(outputName);
-		double[][] doubleMatrix = MLContextConversionUtil.matrixObjectToDoubleMatrix(mo);
-		return doubleMatrix;
+		return MLContextConversionUtil.matrixObjectTo2DDoubleArray(mo);
 	}
 
 	/**
@@ -150,15 +159,20 @@ public class MLResults {
 	 * <br>2 1 3.0
 	 * <br>2 2 4.0
 	 * </code>
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code JavaRDD<String>} in IJV format
 	 */
 	public JavaRDD<String> getJavaRDDStringIJV(String outputName) {
-		MatrixObject mo = getMatrixObject(outputName);
-		JavaRDD<String> javaRDDStringIJV = MLContextConversionUtil.matrixObjectToJavaRDDStringIJV(mo);
-		return javaRDDStringIJV;
+		if (isMatrixObject(outputName)) {
+			MatrixObject mo = getMatrixObject(outputName);
+			return MLContextConversionUtil.matrixObjectToJavaRDDStringIJV(mo);
+		} else if (isFrameObject(outputName)) {
+			FrameObject fo = getFrameObject(outputName);
+			return MLContextConversionUtil.frameObjectToJavaRDDStringIJV(fo);
+		}
+		return null;
 	}
 
 	/**
@@ -174,15 +188,20 @@ public class MLResults {
 	 * <code>1.0,2.0
 	 * <br>3.0,4.0
 	 * </code>
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code JavaRDD<String>} in CSV format
 	 */
 	public JavaRDD<String> getJavaRDDStringCSV(String outputName) {
-		MatrixObject mo = getMatrixObject(outputName);
-		JavaRDD<String> javaRDDStringCSV = MLContextConversionUtil.matrixObjectToJavaRDDStringCSV(mo);
-		return javaRDDStringCSV;
+		if (isMatrixObject(outputName)) {
+			MatrixObject mo = getMatrixObject(outputName);
+			return MLContextConversionUtil.matrixObjectToJavaRDDStringCSV(mo);
+		} else if (isFrameObject(outputName)) {
+			FrameObject fo = getFrameObject(outputName);
+			return MLContextConversionUtil.frameObjectToJavaRDDStringCSV(fo, ",");
+		}
+		return null;
 	}
 
 	/**
@@ -198,15 +217,20 @@ public class MLResults {
 	 * <code>1.0,2.0
 	 * <br>3.0,4.0
 	 * </code>
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code RDD<String>} in CSV format
 	 */
 	public RDD<String> getRDDStringCSV(String outputName) {
-		MatrixObject mo = getMatrixObject(outputName);
-		RDD<String> rddStringCSV = MLContextConversionUtil.matrixObjectToRDDStringCSV(mo);
-		return rddStringCSV;
+		if (isMatrixObject(outputName)) {
+			MatrixObject mo = getMatrixObject(outputName);
+			return MLContextConversionUtil.matrixObjectToRDDStringCSV(mo);
+		} else if (isFrameObject(outputName)) {
+			FrameObject fo = getFrameObject(outputName);
+			return MLContextConversionUtil.frameObjectToRDDStringCSV(fo, ",");
+		}
+		return null;
 	}
 
 	/**
@@ -224,19 +248,25 @@ public class MLResults {
 	 * <br>2 1 3.0
 	 * <br>2 2 4.0
 	 * </code>
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code RDD<String>} in IJV format
 	 */
 	public RDD<String> getRDDStringIJV(String outputName) {
-		MatrixObject mo = getMatrixObject(outputName);
-		RDD<String> rddStringIJV = MLContextConversionUtil.matrixObjectToRDDStringIJV(mo);
-		return rddStringIJV;
+		if (isMatrixObject(outputName)) {
+			MatrixObject mo = getMatrixObject(outputName);
+			return MLContextConversionUtil.matrixObjectToRDDStringIJV(mo);
+		} else if (isFrameObject(outputName)) {
+			FrameObject fo = getFrameObject(outputName);
+			return MLContextConversionUtil.frameObjectToRDDStringIJV(fo);
+		}
+		return null;
 	}
 
 	/**
-	 * Obtain an output as a {@code DataFrame} of doubles.
+	 * Obtain an output as a {@code DataFrame}. If outputting a Matrix, this
+	 * will be a DataFrame of doubles with an ID column.
 	 * <p>
 	 * The following matrix in DML:
 	 * </p>
@@ -245,82 +275,245 @@ public class MLResults {
 	 * <p>
 	 * is equivalent to the following {@code DataFrame} of doubles:
 	 * </p>
-	 * <code>[0.0,1.0,2.0]
-	 * <br>[1.0,3.0,4.0]
+	 * <code>[1.0,1.0,2.0]
+	 * <br>[2.0,3.0,4.0]
 	 * </code>
+	 *
+	 * @param outputName
+	 *            the name of the output
+	 * @return the output as a {@code DataFrame}
+	 */
+	public DataFrame getDataFrame(String outputName) {
+		if (isMatrixObject(outputName)) {
+			MatrixObject mo = getMatrixObject(outputName);
+			return MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, false);
+		} else if (isFrameObject(outputName)) {
+			FrameObject mo = getFrameObject(outputName);
+			return MLContextConversionUtil.frameObjectToDataFrame(mo, sparkExecutionContext);
+		}
+		return null;
+	}
+
+	/**
+	 * Is the output a MatrixObject?
 	 * 
 	 * @param outputName
 	 *            the name of the output
-	 * @return the output as a {@code DataFrame} of doubles
+	 * @return {@code true} if the output is a MatrixObject, {@code false}
+	 *         otherwise.
 	 */
-	public DataFrame getDataFrame(String outputName) {
+	private boolean isMatrixObject(String outputName) {
+		Data data = getData(outputName);
+		return (data instanceof MatrixObject);
+	}
+
+	/**
+	 * Is the output a FrameObject?
+	 * 
+	 * @param outputName
+	 *            the name of the output
+	 * @return {@code true} if the output is a FrameObject, {@code false}
+	 *         otherwise.
+	 */
+	private boolean isFrameObject(String outputName) {
+		Data data = getData(outputName);
+		return (data instanceof FrameObject);
+	}
+
+	/**
+	 * Obtain an output as a {@code DataFrame} of doubles or vectors with an ID
+	 * column.
+	 * <p>
+	 * The following matrix in DML:
+	 * </p>
+	 * <code>M = full('1 2 3 4', rows=2, cols=2);
+	 * </code>
+	 * <p>
+	 * is equivalent to the following {@code DataFrame} of doubles:
+	 * </p>
+	 * <code>[1.0,1.0,2.0]
+	 * <br>[2.0,3.0,4.0]
+	 * </code>
+	 * <p>
+	 * or the following {@code DataFrame} of vectors:
+	 * </p>
+	 * <code>[1.0,[1.0,2.0]]
+	 * <br>[2.0,[3.0,4.0]]
+	 * </code>
+	 *
+	 * @param outputName
+	 *            the name of the output
+	 * @param isVectorDF
+	 *            {@code true} for a vector {@code DataFrame}, {@code false} for
+	 *            a double {@code DataFrame}
+	 * @return the output as a {@code DataFrame} of doubles or vectors with an
+	 *         ID column
+	 */
+	public DataFrame getDataFrame(String outputName, boolean isVectorDF) {
+		if (isFrameObject(outputName)) {
+			throw new MLContextException("This method currently supports only matrices");
+		}
+		MatrixObject mo = getMatrixObject(outputName);
+		return MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, isVectorDF);
+	}
+
+	/**
+	 * Obtain an output as a {@code DataFrame} of doubles with an ID column.
+	 * <p>
+	 * The following matrix in DML:
+	 * </p>
+	 * <code>M = full('1 2 3 4', rows=2, cols=2);
+	 * </code>
+	 * <p>
+	 * is equivalent to the following {@code DataFrame} of doubles:
+	 * </p>
+	 * <code>[1.0,1.0,2.0]
+	 * <br>[2.0,3.0,4.0]
+	 * </code>
+	 *
+	 * @param outputName
+	 *            the name of the output
+	 * @return the output as a {@code DataFrame} of doubles with an ID column
+	 */
+	public DataFrame getDataFrameDoubleWithIDColumn(String outputName) {
+		if (isFrameObject(outputName)) {
+			throw new MLContextException("This method currently supports only matrices");
+		}
+		MatrixObject mo = getMatrixObject(outputName);
+		return MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, false);
+	}
+
+	/**
+	 * Obtain an output as a {@code DataFrame} of vectors with an ID column.
+	 * <p>
+	 * The following matrix in DML:
+	 * </p>
+	 * <code>M = full('1 2 3 4', rows=2, cols=2);
+	 * </code>
+	 * <p>
+	 * is equivalent to the following {@code DataFrame} of vectors:
+	 * </p>
+	 * <code>[1.0,[1.0,2.0]]
+	 * <br>[2.0,[3.0,4.0]]
+	 * </code>
+	 *
+	 * @param outputName
+	 *            the name of the output
+	 * @return the output as a {@code DataFrame} of vectors with an ID column
+	 */
+	public DataFrame getDataFrameVectorWithIDColumn(String outputName) {
+		if (isFrameObject(outputName)) {
+			throw new MLContextException("This method currently supports only matrices");
+		}
+		MatrixObject mo = getMatrixObject(outputName);
+		return MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, true);
+	}
+
+	/**
+	 * Obtain an output as a {@code DataFrame} of doubles with no ID column.
+	 * <p>
+	 * The following matrix in DML:
+	 * </p>
+	 * <code>M = full('1 2 3 4', rows=2, cols=2);
+	 * </code>
+	 * <p>
+	 * is equivalent to the following {@code DataFrame} of doubles:
+	 * </p>
+	 * <code>[1.0,2.0]
+	 * <br>[3.0,4.0]
+	 * </code>
+	 *
+	 * @param outputName
+	 *            the name of the output
+	 * @return the output as a {@code DataFrame} of doubles with no ID column
+	 */
+	public DataFrame getDataFrameDoubleNoIDColumn(String outputName) {
+		if (isFrameObject(outputName)) {
+			throw new MLContextException("This method currently supports only matrices");
+		}
 		MatrixObject mo = getMatrixObject(outputName);
 		DataFrame df = MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, false);
-		return df;
+		return df.drop(RDDConverterUtils.DF_ID_COLUMN);
 	}
-	
-	public DataFrame getDataFrame(String outputName, boolean isVectorDF) {
+
+	/**
+	 * Obtain an output as a {@code DataFrame} of vectors with no ID column.
+	 * <p>
+	 * The following matrix in DML:
+	 * </p>
+	 * <code>M = full('1 2 3 4', rows=2, cols=2);
+	 * </code>
+	 * <p>
+	 * is equivalent to the following {@code DataFrame} of vectors:
+	 * </p>
+	 * <code>[[1.0,2.0]]
+	 * <br>[[3.0,4.0]]
+	 * </code>
+	 *
+	 * @param outputName
+	 *            the name of the output
+	 * @return the output as a {@code DataFrame} of vectors with no ID column
+	 */
+	public DataFrame getDataFrameVectorNoIDColumn(String outputName) {
+		if (isFrameObject(outputName)) {
+			throw new MLContextException("This method currently supports only matrices");
+		}
 		MatrixObject mo = getMatrixObject(outputName);
-		DataFrame df = MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, isVectorDF);
-		return df;
+		DataFrame df = MLContextConversionUtil.matrixObjectToDataFrame(mo, sparkExecutionContext, true);
+		return df.drop(RDDConverterUtils.DF_ID_COLUMN);
 	}
 
 	/**
 	 * Obtain an output as a {@code Matrix}.
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code Matrix}
 	 */
 	public Matrix getMatrix(String outputName) {
 		MatrixObject mo = getMatrixObject(outputName);
-		Matrix matrix = new Matrix(mo, sparkExecutionContext);
-		return matrix;
+		return new Matrix(mo, sparkExecutionContext);
 	}
-	
+
+	/**
+	 * Obtain an output as a {@code Frame}.
+	 *
+	 * @param outputName
+	 *            the name of the output
+	 * @return the output as a {@code Frame}
+	 */
+	public Frame getFrame(String outputName) {
+		FrameObject fo = getFrameObject(outputName);
+		return new Frame(fo, sparkExecutionContext);
+	}
 
 	/**
 	 * Obtain an output as a {@code BinaryBlockMatrix}.
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code BinaryBlockMatrix}
 	 */
 	public BinaryBlockMatrix getBinaryBlockMatrix(String outputName) {
 		MatrixObject mo = getMatrixObject(outputName);
-		BinaryBlockMatrix binaryBlockMatrix = MLContextConversionUtil.matrixObjectToBinaryBlockMatrix(mo,
-				sparkExecutionContext);
-		return binaryBlockMatrix;
+		return MLContextConversionUtil.matrixObjectToBinaryBlockMatrix(mo, sparkExecutionContext);
 	}
 
 	/**
 	 * Obtain an output as a two-dimensional {@code String} array.
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a two-dimensional {@code String} array
 	 */
-	public String[][] getFrame(String outputName) {
-		try {
-			Data data = getData(outputName);
-			if (!(data instanceof FrameObject)) {
-				throw new MLContextException("Variable '" + outputName + "' not a frame");
-			}
-			FrameObject fo = (FrameObject) data;
-			FrameBlock fb = fo.acquireRead();
-			String[][] frame = DataConverter.convertToStringFrame(fb);
-			fo.release();
-			return frame;
-		} catch (CacheException e) {
-			throw new MLContextException("Cache exception when reading frame", e);
-		} catch (DMLRuntimeException e) {
-			throw new MLContextException("DML runtime exception when reading frame", e);
-		}
+	public String[][] getFrameAs2DStringArray(String outputName) {
+		FrameObject frameObject = getFrameObject(outputName);
+		return MLContextConversionUtil.frameObjectTo2DStringArray(frameObject);
 	}
 
 	/**
 	 * Obtain a {@code double} output
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code double}
@@ -331,8 +524,30 @@ public class MLResults {
 	}
 
 	/**
+	 * Obtain a serializable object as output
+	 *
+	 * @param outputName
+	 *            the name of the output
+	 * @return the output as a serializable object.
+	 */
+
+	public Object get(String outputName) {
+		Data data = getData(outputName);
+		if (data instanceof ScalarObject) {
+			ScalarObject so = (ScalarObject) data;
+			return so.getValue();
+		} else if (data instanceof MatrixObject) {
+			return getMatrix(outputName);
+		} else if (data instanceof FrameObject) {
+			return getFrame(outputName);
+		} else {
+			return data;
+		}
+	}
+
+	/**
 	 * Obtain an output as a {@code Scalar} object.
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code Scalar} object
@@ -342,13 +557,12 @@ public class MLResults {
 		if (!(data instanceof ScalarObject)) {
 			throw new MLContextException("Variable '" + outputName + "' not a scalar");
 		}
-		ScalarObject so = (ScalarObject) data;
-		return so;
+		return (ScalarObject) data;
 	}
 
 	/**
 	 * Obtain a {@code boolean} output
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code boolean}
@@ -360,7 +574,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a {@code long} output
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code long}
@@ -372,7 +586,7 @@ public class MLResults {
 
 	/**
 	 * Obtain a {@code String} output
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output as a {@code String}
@@ -384,7 +598,7 @@ public class MLResults {
 
 	/**
 	 * Obtain the Script object associated with these results.
-	 * 
+	 *
 	 * @return the DML or PYDML Script object
 	 */
 	public Script getScript() {
@@ -394,6 +608,8 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T>
+	 *            the type of the first output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @return a Scala tuple
@@ -406,6 +622,10 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -420,6 +640,12 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -437,6 +663,14 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -457,6 +691,16 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -479,6 +723,18 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -504,6 +760,20 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -532,6 +802,22 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -562,6 +848,24 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -595,6 +899,26 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -630,6 +954,28 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -669,6 +1015,30 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
+	 * @param <T12>
+	 *            the type of the twelfth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -710,6 +1080,32 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
+	 * @param <T12>
+	 *            the type of the twelfth output
+	 * @param <T13>
+	 *            the type of the thirteenth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -753,6 +1149,34 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
+	 * @param <T12>
+	 *            the type of the twelfth output
+	 * @param <T13>
+	 *            the type of the thirteenth output
+	 * @param <T14>
+	 *            the type of the fourteenth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -799,6 +1223,36 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
+	 * @param <T12>
+	 *            the type of the twelfth output
+	 * @param <T13>
+	 *            the type of the thirteenth output
+	 * @param <T14>
+	 *            the type of the fourteenth output
+	 * @param <T15>
+	 *            the type of the fifteenth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -847,6 +1301,38 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
+	 * @param <T12>
+	 *            the type of the twelfth output
+	 * @param <T13>
+	 *            the type of the thirteenth output
+	 * @param <T14>
+	 *            the type of the fourteenth output
+	 * @param <T15>
+	 *            the type of the fifteenth output
+	 * @param <T16>
+	 *            the type of the sixteenth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -899,6 +1385,40 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
+	 * @param <T12>
+	 *            the type of the twelfth output
+	 * @param <T13>
+	 *            the type of the thirteenth output
+	 * @param <T14>
+	 *            the type of the fourteenth output
+	 * @param <T15>
+	 *            the type of the fifteenth output
+	 * @param <T16>
+	 *            the type of the sixteenth output
+	 * @param <T17>
+	 *            the type of the seventeenth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -953,6 +1473,42 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
+	 * @param <T12>
+	 *            the type of the twelfth output
+	 * @param <T13>
+	 *            the type of the thirteenth output
+	 * @param <T14>
+	 *            the type of the fourteenth output
+	 * @param <T15>
+	 *            the type of the fifteenth output
+	 * @param <T16>
+	 *            the type of the sixteenth output
+	 * @param <T17>
+	 *            the type of the seventeenth output
+	 * @param <T18>
+	 *            the type of the eighteenth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -1009,6 +1565,44 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
+	 * @param <T12>
+	 *            the type of the twelfth output
+	 * @param <T13>
+	 *            the type of the thirteenth output
+	 * @param <T14>
+	 *            the type of the fourteenth output
+	 * @param <T15>
+	 *            the type of the fifteenth output
+	 * @param <T16>
+	 *            the type of the sixteenth output
+	 * @param <T17>
+	 *            the type of the seventeenth output
+	 * @param <T18>
+	 *            the type of the eighteenth output
+	 * @param <T19>
+	 *            the type of the nineteenth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -1068,6 +1662,46 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
+	 * @param <T12>
+	 *            the type of the twelfth output
+	 * @param <T13>
+	 *            the type of the thirteenth output
+	 * @param <T14>
+	 *            the type of the fourteenth output
+	 * @param <T15>
+	 *            the type of the fifteenth output
+	 * @param <T16>
+	 *            the type of the sixteenth output
+	 * @param <T17>
+	 *            the type of the seventeenth output
+	 * @param <T18>
+	 *            the type of the eighteenth output
+	 * @param <T19>
+	 *            the type of the nineteenth output
+	 * @param <T20>
+	 *            the type of the twentieth output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -1129,6 +1763,48 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
+	 * @param <T12>
+	 *            the type of the twelfth output
+	 * @param <T13>
+	 *            the type of the thirteenth output
+	 * @param <T14>
+	 *            the type of the fourteenth output
+	 * @param <T15>
+	 *            the type of the fifteenth output
+	 * @param <T16>
+	 *            the type of the sixteenth output
+	 * @param <T17>
+	 *            the type of the seventeenth output
+	 * @param <T18>
+	 *            the type of the eighteenth output
+	 * @param <T19>
+	 *            the type of the nineteenth output
+	 * @param <T20>
+	 *            the type of the twentieth output
+	 * @param <T21>
+	 *            the type of the twenty-first output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -1193,6 +1869,50 @@ public class MLResults {
 	/**
 	 * Obtain a Scala tuple.
 	 * 
+	 * @param <T1>
+	 *            the type of the first output
+	 * @param <T2>
+	 *            the type of the second output
+	 * @param <T3>
+	 *            the type of the third output
+	 * @param <T4>
+	 *            the type of the fourth output
+	 * @param <T5>
+	 *            the type of the fifth output
+	 * @param <T6>
+	 *            the type of the sixth output
+	 * @param <T7>
+	 *            the type of the seventh output
+	 * @param <T8>
+	 *            the type of the eighth output
+	 * @param <T9>
+	 *            the type of the ninth output
+	 * @param <T10>
+	 *            the type of the tenth output
+	 * @param <T11>
+	 *            the type of the eleventh output
+	 * @param <T12>
+	 *            the type of the twelfth output
+	 * @param <T13>
+	 *            the type of the thirteenth output
+	 * @param <T14>
+	 *            the type of the fourteenth output
+	 * @param <T15>
+	 *            the type of the fifteenth output
+	 * @param <T16>
+	 *            the type of the sixteenth output
+	 * @param <T17>
+	 *            the type of the seventeenth output
+	 * @param <T18>
+	 *            the type of the eighteenth output
+	 * @param <T19>
+	 *            the type of the nineteenth output
+	 * @param <T20>
+	 *            the type of the twentieth output
+	 * @param <T21>
+	 *            the type of the twenty-first output
+	 * @param <T22>
+	 *            the type of the twenty-second output
 	 * @param outputName1
 	 *            the name of the first output
 	 * @param outputName2
@@ -1262,7 +1982,7 @@ public class MLResults {
 	 * specific output type. MLResults tuple support requires specifying the
 	 * object types at runtime to avoid the items in the tuple being returned as
 	 * Anys.
-	 * 
+	 *
 	 * @param outputName
 	 *            the name of the output
 	 * @return the output value cast to a specific output type
@@ -1289,7 +2009,7 @@ public class MLResults {
 	/**
 	 * Obtain the symbol table, which is essentially a {@code Map<String, Data>}
 	 * representing variables and their values as SystemML representations.
-	 * 
+	 *
 	 * @return the symbol table
 	 */
 	public LocalVariableMap getSymbolTable() {

@@ -24,7 +24,7 @@ import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.DataFrame;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
-import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
+import org.apache.sysml.runtime.instructions.spark.utils.RDDConverterUtils;
 
 /**
  * Matrix encapsulates a SystemML matrix. It allows for easy conversion to
@@ -48,7 +48,7 @@ public class Matrix {
 	 * 
 	 * @return the matrix as a SystemML MatrixObject
 	 */
-	public MatrixObject asMatrixObject() {
+	public MatrixObject toMatrixObject() {
 		return matrixObject;
 	}
 
@@ -57,9 +57,8 @@ public class Matrix {
 	 * 
 	 * @return the matrix as a two-dimensional double array
 	 */
-	public double[][] asDoubleMatrix() {
-		double[][] doubleMatrix = MLContextConversionUtil.matrixObjectToDoubleMatrix(matrixObject);
-		return doubleMatrix;
+	public double[][] to2DDoubleArray() {
+		return MLContextConversionUtil.matrixObjectTo2DDoubleArray(matrixObject);
 	}
 
 	/**
@@ -67,9 +66,8 @@ public class Matrix {
 	 * 
 	 * @return the matrix as a {@code JavaRDD<String>} in IJV format
 	 */
-	public JavaRDD<String> asJavaRDDStringIJV() {
-		JavaRDD<String> javaRDDStringIJV = MLContextConversionUtil.matrixObjectToJavaRDDStringIJV(matrixObject);
-		return javaRDDStringIJV;
+	public JavaRDD<String> toJavaRDDStringIJV() {
+		return MLContextConversionUtil.matrixObjectToJavaRDDStringIJV(matrixObject);
 	}
 
 	/**
@@ -77,9 +75,8 @@ public class Matrix {
 	 * 
 	 * @return the matrix as a {@code JavaRDD<String>} in CSV format
 	 */
-	public JavaRDD<String> asJavaRDDStringCSV() {
-		JavaRDD<String> javaRDDStringCSV = MLContextConversionUtil.matrixObjectToJavaRDDStringCSV(matrixObject);
-		return javaRDDStringCSV;
+	public JavaRDD<String> toJavaRDDStringCSV() {
+		return MLContextConversionUtil.matrixObjectToJavaRDDStringCSV(matrixObject);
 	}
 
 	/**
@@ -87,9 +84,8 @@ public class Matrix {
 	 * 
 	 * @return the matrix as a {@code RDD<String>} in CSV format
 	 */
-	public RDD<String> asRDDStringCSV() {
-		RDD<String> rddStringCSV = MLContextConversionUtil.matrixObjectToRDDStringCSV(matrixObject);
-		return rddStringCSV;
+	public RDD<String> toRDDStringCSV() {
+		return MLContextConversionUtil.matrixObjectToRDDStringCSV(matrixObject);
 	}
 
 	/**
@@ -97,19 +93,55 @@ public class Matrix {
 	 * 
 	 * @return the matrix as a {@code RDD<String>} in IJV format
 	 */
-	public RDD<String> asRDDStringIJV() {
-		RDD<String> rddStringIJV = MLContextConversionUtil.matrixObjectToRDDStringIJV(matrixObject);
-		return rddStringIJV;
+	public RDD<String> toRDDStringIJV() {
+		return MLContextConversionUtil.matrixObjectToRDDStringIJV(matrixObject);
 	}
 
 	/**
-	 * Obtain the matrix as a {@code DataFrame}
+	 * Obtain the matrix as a {@code DataFrame} of doubles with an ID column
 	 * 
-	 * @return the matrix as a {@code DataFrame}
+	 * @return the matrix as a {@code DataFrame} of doubles with an ID column
 	 */
-	public DataFrame asDataFrame() {
+	public DataFrame toDF() {
+		return MLContextConversionUtil.matrixObjectToDataFrame(matrixObject, sparkExecutionContext, false);
+	}
+
+	/**
+	 * Obtain the matrix as a {@code DataFrame} of doubles with an ID column
+	 * 
+	 * @return the matrix as a {@code DataFrame} of doubles with an ID column
+	 */
+	public DataFrame toDFDoubleWithIDColumn() {
+		return MLContextConversionUtil.matrixObjectToDataFrame(matrixObject, sparkExecutionContext, false);
+	}
+
+	/**
+	 * Obtain the matrix as a {@code DataFrame} of doubles with no ID column
+	 * 
+	 * @return the matrix as a {@code DataFrame} of doubles with no ID column
+	 */
+	public DataFrame toDFDoubleNoIDColumn() {
 		DataFrame df = MLContextConversionUtil.matrixObjectToDataFrame(matrixObject, sparkExecutionContext, false);
-		return df;
+		return df.drop(RDDConverterUtils.DF_ID_COLUMN);
+	}
+
+	/**
+	 * Obtain the matrix as a {@code DataFrame} of vectors with an ID column
+	 * 
+	 * @return the matrix as a {@code DataFrame} of vectors with an ID column
+	 */
+	public DataFrame toDFVectorWithIDColumn() {
+		return MLContextConversionUtil.matrixObjectToDataFrame(matrixObject, sparkExecutionContext, true);
+	}
+
+	/**
+	 * Obtain the matrix as a {@code DataFrame} of vectors with no ID column
+	 * 
+	 * @return the matrix as a {@code DataFrame} of vectors with no ID column
+	 */
+	public DataFrame toDFVectorNoIDColumn() {
+		DataFrame df = MLContextConversionUtil.matrixObjectToDataFrame(matrixObject, sparkExecutionContext, true);
+		return df.drop(RDDConverterUtils.DF_ID_COLUMN);
 	}
 
 	/**
@@ -117,10 +149,8 @@ public class Matrix {
 	 * 
 	 * @return the matrix as a {@code BinaryBlockMatrix}
 	 */
-	public BinaryBlockMatrix asBinaryBlockMatrix() {
-		BinaryBlockMatrix binaryBlockMatrix = MLContextConversionUtil.matrixObjectToBinaryBlockMatrix(matrixObject,
-				sparkExecutionContext);
-		return binaryBlockMatrix;
+	public BinaryBlockMatrix toBinaryBlockMatrix() {
+		return MLContextConversionUtil.matrixObjectToBinaryBlockMatrix(matrixObject, sparkExecutionContext);
 	}
 
 	/**
@@ -129,9 +159,7 @@ public class Matrix {
 	 * @return the matrix metadata
 	 */
 	public MatrixMetadata getMatrixMetadata() {
-		MatrixCharacteristics matrixCharacteristics = matrixObject.getMatrixCharacteristics();
-		MatrixMetadata matrixMetadata = new MatrixMetadata(matrixCharacteristics);
-		return matrixMetadata;
+		return new MatrixMetadata(matrixObject.getMatrixCharacteristics());
 	}
 
 	@Override

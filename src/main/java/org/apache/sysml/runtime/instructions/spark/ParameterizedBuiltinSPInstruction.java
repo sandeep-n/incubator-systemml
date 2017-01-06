@@ -21,9 +21,9 @@ package org.apache.sysml.runtime.instructions.spark;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 
 import org.apache.spark.api.java.JavaPairRDD;
+import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.function.Function;
 import org.apache.spark.api.java.function.PairFlatMapFunction;
 import org.apache.spark.api.java.function.PairFunction;
@@ -207,17 +207,31 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 			CPOperand ngrpOp = new CPOperand(params.get(Statement.GAGG_NUM_GROUPS));
 			int ngroups = (int)sec.getScalarInput(ngrpOp.getName(), ngrpOp.getValueType(), ngrpOp.isLiteral()).getLongValue();
 			
-			//execute map grouped aggregate
-			JavaPairRDD<MatrixIndexes, MatrixBlock> out = 
-					target.flatMapToPair(new RDDMapGroupedAggFunction(groups, _optr, 
-							ngroups, mc1.getRowsPerBlock(), mc1.getColsPerBlock()));
-			out = RDDAggregateUtils.sumByKeyStable(out);
-			
-			//updated characteristics and handle outputs
-			mcOut.set(ngroups, mc1.getCols(), mc1.getRowsPerBlock(), mc1.getColsPerBlock(), -1);
-			sec.setRDDHandleForVariable(output.getName(), out);			
-			sec.addLineageRDD( output.getName(), targetVar );
-			sec.addLineageBroadcast( output.getName(), groupsVar );	
+			//single-block aggregation
+			if( ngroups <= mc1.getRowsPerBlock() && mc1.getCols() <= mc1.getColsPerBlock() ) {
+				//execute map grouped aggregate
+				JavaRDD<MatrixBlock> out = target.map(new RDDMapGroupedAggFunction2(groups, _optr, ngroups));
+				MatrixBlock out2 = RDDAggregateUtils.sumStable(out);
+				
+				//put output block into symbol table (no lineage because single block)
+				//this also includes implicit maintenance of matrix characteristics
+				sec.setMatrixOutput(output.getName(), out2);
+			}
+			//multi-block aggregation
+			else {
+				//execute map grouped aggregate
+				JavaPairRDD<MatrixIndexes, MatrixBlock> out = 
+						target.flatMapToPair(new RDDMapGroupedAggFunction(groups, _optr, 
+								ngroups, mc1.getRowsPerBlock(), mc1.getColsPerBlock()));
+				
+				out = RDDAggregateUtils.sumByKeyStable(out);
+				
+				//updated characteristics and handle outputs
+				mcOut.set(ngroups, mc1.getCols(), mc1.getRowsPerBlock(), mc1.getColsPerBlock(), -1);
+				sec.setRDDHandleForVariable(output.getName(), out);			
+				sec.addLineageRDD( output.getName(), targetVar );
+				sec.addLineageBroadcast( output.getName(), groupsVar );	
+			}
 		}
 		else if ( opcode.equalsIgnoreCase("groupedagg") ) 
 		{	
@@ -429,7 +443,7 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 			FrameBlock meta = sec.getFrameInput(params.get("meta"));		
 			MatrixCharacteristics mcIn = sec.getMatrixCharacteristics(params.get("target"));
 			MatrixCharacteristics mcOut = sec.getMatrixCharacteristics(output.getName());
-			List<String> colnames = !TfMetaUtils.isIDSpecification(params.get("spec")) ?
+			String[] colnames = !TfMetaUtils.isIDSpecification(params.get("spec")) ?
 					in.lookup(1L).get(0).getColumnNames() : null; 
 			
 			//compute omit offset map for block shifts
@@ -463,7 +477,7 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 			JavaPairRDD<MatrixIndexes,MatrixBlock> in = sec.getBinaryBlockRDDHandleForVariable(params.get("target"));
 			MatrixCharacteristics mc = sec.getMatrixCharacteristics(params.get("target"));
 			FrameBlock meta = sec.getFrameInput(params.get("meta"));		
-			List<String> colnames = meta.getColumnNames();
+			String[] colnames = meta.getColumnNames();
 			
 			//reblock if necessary (clen > bclen)
 			if( mc.getCols() > mc.getNumColBlocks() ) {
@@ -475,22 +489,21 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 			//construct decoder and decode individual matrix blocks
 			Decoder decoder = DecoderFactory.createDecoder(params.get("spec"), colnames, null, meta);
 			JavaPairRDD<Long,FrameBlock> out = in.mapToPair(
-					new RDDTransformDecodeFunction(decoder, meta.getNumColumns(), mc.getRowsPerBlock()));
+					new RDDTransformDecodeFunction(decoder, mc.getRowsPerBlock()));
 			
 			//set output and maintain lineage/output characteristics
 			sec.setRDDHandleForVariable(output.getName(), out);
 			sec.addLineageRDD(output.getName(), params.get("target"));
 			ec.releaseFrameInput(params.get("meta"));
+			sec.getMatrixCharacteristics(output.getName()).set(mc.getRows(), 
+				meta.getNumColumns(), mc.getRowsPerBlock(), mc.getColsPerBlock(), -1);
+			sec.getFrameObject(output.getName()).setSchema(decoder.getSchema());
 		}
 		else {
 			throw new DMLRuntimeException("Unknown parameterized builtin opcode: "+opcode);
 		}
 	}
-	
 
-	/**
-	 * 
-	 */
 	public static class RDDReplaceFunction implements Function<MatrixBlock, MatrixBlock> 
 	{
 		private static final long serialVersionUID = 6576713401901671659L;
@@ -511,10 +524,7 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 			return (MatrixBlock) arg0.replaceOperations(new MatrixBlock(), _pattern, _replacement);
 		}		
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class RDDRemoveEmptyFunction implements PairFlatMapFunction<Tuple2<MatrixIndexes,Tuple2<MatrixBlock, MatrixBlock>>,MatrixIndexes,MatrixBlock> 
 	{
 		private static final long serialVersionUID = 4906304771183325289L;
@@ -548,10 +558,7 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 			return SparkUtils.fromIndexedMatrixBlock(out);
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class RDDRemoveEmptyFunctionInMem implements PairFlatMapFunction<Tuple2<MatrixIndexes,MatrixBlock>,MatrixIndexes,MatrixBlock> 
 	{
 		private static final long serialVersionUID = 4906304771183325289L;
@@ -593,10 +600,7 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 			return SparkUtils.fromIndexedMatrixBlock(out);
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class RDDRExpandFunction implements PairFlatMapFunction<Tuple2<MatrixIndexes,MatrixBlock>,MatrixIndexes,MatrixBlock> 
 	{
 		private static final long serialVersionUID = -6153643261956222601L;
@@ -671,10 +675,38 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 			return SparkUtils.fromIndexedMatrixBlock(outlist);
 		}
 	}
-	
+
 	/**
-	 * 
+	 * Similar to RDDMapGroupedAggFunction but single output block.
 	 */
+	public static class RDDMapGroupedAggFunction2 implements Function<Tuple2<MatrixIndexes,MatrixBlock>,MatrixBlock> 
+	{
+		private static final long serialVersionUID = -6820599604299797661L;
+		
+		private PartitionedBroadcast<MatrixBlock> _pbm = null;
+		private Operator _op = null;
+		private int _ngroups = -1;
+		
+		public RDDMapGroupedAggFunction2(PartitionedBroadcast<MatrixBlock> pbm, Operator op, int ngroups) {
+			_pbm = pbm;
+			_op = op;
+			_ngroups = ngroups;
+		}
+
+		@Override
+		public MatrixBlock call(Tuple2<MatrixIndexes, MatrixBlock> arg0)
+			throws Exception 
+		{
+			//get all inputs
+			MatrixIndexes ix = arg0._1();
+			MatrixBlock target = arg0._2();		
+			MatrixBlock groups = _pbm.getBlock((int)ix.getRowIndex(), 1);
+			
+			//execute map grouped aggregate operations
+			return groups.groupedAggOperations(target, null, new MatrixBlock(), _ngroups, _op);
+		}
+	}
+
 	public static class CreateMatrixCell implements Function<WeightedCell, MatrixCell> 
 	{
 		private static final long serialVersionUID = -5783727852453040737L;
@@ -727,9 +759,6 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 		}
 	}
 
-	/**
-	 * 
-	 */
 	public static class RDDTransformApplyFunction implements PairFunction<Tuple2<Long,FrameBlock>,Long,FrameBlock> 
 	{
 		private static final long serialVersionUID = 5759813006068230916L;
@@ -763,17 +792,14 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 					DataConverter.convertToFrameBlock(tmp));
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class RDDTransformApplyOffsetFunction implements PairFunction<Tuple2<Long,FrameBlock>,Long,Long> 
 	{
 		private static final long serialVersionUID = 3450977356721057440L;
 		
 		private int[] _omitColList = null;
 		
-		public RDDTransformApplyOffsetFunction(String spec, List<String> colnames) {
+		public RDDTransformApplyOffsetFunction(String spec, String[] colnames) {
 			try {
 				_omitColList = TfMetaUtils.parseJsonIDList(spec, colnames, TfUtils.TXMETHOD_OMIT);
 			} 
@@ -796,7 +822,7 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 				for( int j=0; j<_omitColList.length; j++ ) {
 					int colID = _omitColList[j];
 					Object val = blk.get(i, colID-1);
-					valid &= !(val==null || (blk.getSchema().get(colID-1)==
+					valid &= !(val==null || (blk.getSchema()[colID-1]==
 							ValueType.STRING &&  val.toString().isEmpty())); 
 				}
 				rmRows += valid ? 0 : 1;
@@ -805,21 +831,16 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 			return new Tuple2<Long, Long>(key, rmRows);
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class RDDTransformDecodeFunction implements PairFunction<Tuple2<MatrixIndexes,MatrixBlock>,Long,FrameBlock> 
 	{
 		private static final long serialVersionUID = -4797324742568170756L;
 		
 		private Decoder _decoder = null;
-		private int _clen = -1;
 		private int _brlen = -1;
 		
-		public RDDTransformDecodeFunction(Decoder decoder, int clen, int brlen) {
+		public RDDTransformDecodeFunction(Decoder decoder, int brlen) {
 			_decoder = decoder;
-			_clen = clen;
 			_brlen = brlen;
 		}
 
@@ -829,7 +850,7 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 		{
 			long rix = UtilFunctions.computeCellIndex(in._1().getRowIndex(), _brlen, 0);
 			return new Tuple2<Long, FrameBlock>(rix, 
-					_decoder.decode(in._2(), new FrameBlock(_clen, ValueType.STRING)));
+					_decoder.decode(in._2(), new FrameBlock(_decoder.getSchema())));
 		}
 	}
 	
@@ -861,14 +882,7 @@ public class ParameterizedBuiltinSPInstruction  extends ComputationSPInstruction
 			return new Tuple2<MatrixIndexes, MatrixBlock>(new MatrixIndexes(inIx.getRowIndex(), 1), out);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param mc1
-	 * @param mcOut
-	 * @param out
-	 * @throws DMLRuntimeException
-	 */
+
 	public void setOutputCharacteristicsForGroupedAgg(MatrixCharacteristics mc1, MatrixCharacteristics mcOut, JavaPairRDD<MatrixIndexes, MatrixCell> out) 
 		throws DMLRuntimeException 
 	{

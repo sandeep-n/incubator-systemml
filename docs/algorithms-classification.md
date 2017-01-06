@@ -129,13 +129,21 @@ Eqs. (1) and (2).
 <div class="codetabs">
 <div data-lang="Python" markdown="1">
 {% highlight python %}
-import SystemML as sml
+from systemml.mllearn import LogisticRegression
 # C = 1/reg
-logistic = sml.mllearn.LogisticRegression(sqlCtx, fit_intercept=True, max_iter=100, max_inner_iter=0, tol=0.000001, C=1.0)
+logistic = LogisticRegression(sqlCtx, fit_intercept=True, max_iter=100, max_inner_iter=0, tol=0.000001, C=1.0)
 # X_train, y_train and X_test can be NumPy matrices or Pandas DataFrame or SciPy Sparse Matrix
 y_test = logistic.fit(X_train, y_train).predict(X_test)
 # df_train is DataFrame that contains two columns: "features" (of type Vector) and "label". df_test is a DataFrame that contains the column "features"
 y_test = logistic.fit(df_train).transform(df_test)
+{% endhighlight %}
+</div>
+<div data-lang="Scala" markdown="1">
+{% highlight scala %}
+import org.apache.sysml.api.ml.LogisticRegression
+val lr = new LogisticRegression("logReg", sc).setIcpt(0).setMaxOuterIter(100).setMaxInnerIter(0).setRegParam(0.000001).setTol(0.000001)
+val model = lr.fit(X_train_df)
+val prediction = model.transform(X_test_df)
 {% endhighlight %}
 </div>
 <div data-lang="Hadoop" markdown="1">
@@ -229,7 +237,7 @@ SystemML Language Reference for details.
 {% highlight python %}
 # Scikit-learn way
 from sklearn import datasets, neighbors
-import SystemML as sml
+from systemml.mllearn import LogisticRegression
 from pyspark.sql import SQLContext
 sqlCtx = SQLContext(sc)
 digits = datasets.load_digits()
@@ -240,12 +248,12 @@ X_train = X_digits[:.9 * n_samples]
 y_train = y_digits[:.9 * n_samples]
 X_test = X_digits[.9 * n_samples:]
 y_test = y_digits[.9 * n_samples:]
-logistic = sml.mllearn.LogisticRegression(sqlCtx)
+logistic = LogisticRegression(sqlCtx)
 print('LogisticRegression score: %f' % logistic.fit(X_train, y_train).score(X_test, y_test))
 
 # MLPipeline way
 from pyspark.ml import Pipeline
-import SystemML as sml
+from systemml.mllearn import LogisticRegression
 from pyspark.ml.feature import HashingTF, Tokenizer
 from pyspark.sql import SQLContext
 sqlCtx = SQLContext(sc)
@@ -265,7 +273,7 @@ training = sqlCtx.createDataFrame([
 ], ["id", "text", "label"])
 tokenizer = Tokenizer(inputCol="text", outputCol="words")
 hashingTF = HashingTF(inputCol="words", outputCol="features", numFeatures=20)
-lr = sml.mllearn.LogisticRegression(sqlCtx)
+lr = LogisticRegression(sqlCtx)
 pipeline = Pipeline(stages=[tokenizer, hashingTF, lr])
 model = pipeline.fit(training)
 test = sqlCtx.createDataFrame([
@@ -274,6 +282,38 @@ test = sqlCtx.createDataFrame([
     (14L, "mapreduce spark"),
     (15L, "apache hadoop")], ["id", "text"])
 prediction = model.transform(test)
+prediction.show()
+{% endhighlight %}
+</div>
+<div data-lang="Scala" markdown="1">
+{% highlight scala %}
+import org.apache.spark.ml.feature.{HashingTF, Tokenizer}
+import org.apache.sysml.api.ml.LogisticRegression
+import org.apache.spark.ml.Pipeline
+val training = sqlContext.createDataFrame(Seq(
+    ("a b c d e spark", 1.0),
+    ("b d", 2.0),
+    ("spark f g h", 1.0),
+    ("hadoop mapreduce", 2.0),
+    ("b spark who", 1.0),
+    ("g d a y", 2.0),
+    ("spark fly", 1.0),
+    ("was mapreduce", 2.0),
+    ("e spark program", 1.0),
+    ("a e c l", 2.0),
+    ("spark compile", 1.0),
+    ("hadoop software", 2.0))).toDF("text", "label")
+val tokenizer = new Tokenizer().setInputCol("text").setOutputCol("words")
+val hashingTF = new HashingTF().setNumFeatures(20).setInputCol(tokenizer.getOutputCol).setOutputCol("features")
+val lr = new LogisticRegression("logReg", sc)
+val pipeline = new Pipeline().setStages(Array(tokenizer, hashingTF, lr))
+val model = pipeline.fit(training)
+val test = sqlContext.createDataFrame(Seq(
+    ("spark i j k", 1.0),
+    ("l m n", 2.0),
+    ("mapreduce spark", 1.0),
+    ("apache hadoop", 2.0))).toDF("text", "trueLabel")
+val prediction = model.transform(test)
 prediction.show()
 {% endhighlight %}
 </div>
@@ -458,13 +498,20 @@ support vector machine (`y` with domain size `2`).
 <div class="codetabs">
 <div data-lang="Python" markdown="1">
 {% highlight python %}
-import SystemML as sml
+from systemml.mllearn import SVM
 # C = 1/reg
-svm = sml.mllearn.SVM(sqlCtx, fit_intercept=True, max_iter=100, tol=0.000001, C=1.0, is_multi_class=False)
+svm = SVM(sqlCtx, fit_intercept=True, max_iter=100, tol=0.000001, C=1.0, is_multi_class=False)
 # X_train, y_train and X_test can be NumPy matrices or Pandas DataFrame or SciPy Sparse Matrix
 y_test = svm.fit(X_train, y_train)
 # df_train is DataFrame that contains two columns: "features" (of type Vector) and "label". df_test is a DataFrame that contains the column "features"
 y_test = svm.fit(df_train)
+{% endhighlight %}
+</div>
+<div data-lang="Scala" markdown="1">
+{% highlight scala %}
+import org.apache.sysml.api.ml.SVM
+val svm = new SVM("svm", sc, isMultiClass=false).setIcpt(0).setMaxIter(100).setRegParam(0.000001).setTol(0.000001)
+val model = svm.fit(X_train_df)
 {% endhighlight %}
 </div>
 <div data-lang="Hadoop" markdown="1">
@@ -508,6 +555,11 @@ y_test = svm.fit(df_train)
 y_test = svm.predict(X_test)
 # df_test is a DataFrame that contains the column "features" of type Vector
 y_test = svm.transform(df_test)
+{% endhighlight %}
+</div>
+<div data-lang="Scala" markdown="1">
+{% highlight scala %}
+val prediction = model.transform(X_test_df)
 {% endhighlight %}
 </div>
 <div data-lang="Hadoop" markdown="1">
@@ -714,13 +766,20 @@ class labels.
 <div class="codetabs">
 <div data-lang="Python" markdown="1">
 {% highlight python %}
-import SystemML as sml
+from systemml.mllearn import SVM
 # C = 1/reg
-svm = sml.mllearn.SVM(sqlCtx, fit_intercept=True, max_iter=100, tol=0.000001, C=1.0, is_multi_class=True)
+svm = SVM(sqlCtx, fit_intercept=True, max_iter=100, tol=0.000001, C=1.0, is_multi_class=True)
 # X_train, y_train and X_test can be NumPy matrices or Pandas DataFrame or SciPy Sparse Matrix
 y_test = svm.fit(X_train, y_train)
 # df_train is DataFrame that contains two columns: "features" (of type Vector) and "label". df_test is a DataFrame that contains the column "features"
 y_test = svm.fit(df_train)
+{% endhighlight %}
+</div>
+<div data-lang="Scala" markdown="1">
+{% highlight scala %}
+import org.apache.sysml.api.ml.SVM
+val svm = new SVM("svm", sc, isMultiClass=true).setIcpt(0).setMaxIter(100).setRegParam(0.000001).setTol(0.000001)
+val model = svm.fit(X_train_df)
 {% endhighlight %}
 </div>
 <div data-lang="Hadoop" markdown="1">
@@ -764,6 +823,11 @@ y_test = svm.fit(df_train)
 y_test = svm.predict(X_test)
 # df_test is a DataFrame that contains the column "features" of type Vector
 y_test = svm.transform(df_test)
+{% endhighlight %}
+</div>
+<div data-lang="Scala" markdown="1">
+{% highlight scala %}
+val prediction = model.transform(X_test_df)
 {% endhighlight %}
 </div>
 <div data-lang="Hadoop" markdown="1">
@@ -852,7 +916,7 @@ SystemML Language Reference for details.
 {% highlight python %}
 # Scikit-learn way
 from sklearn import datasets, neighbors
-import SystemML as sml
+from systemml.mllearn import SVM
 from pyspark.sql import SQLContext
 sqlCtx = SQLContext(sc)
 digits = datasets.load_digits()
@@ -863,12 +927,12 @@ X_train = X_digits[:.9 * n_samples]
 y_train = y_digits[:.9 * n_samples]
 X_test = X_digits[.9 * n_samples:]
 y_test = y_digits[.9 * n_samples:]
-svm = sml.mllearn.SVM(sqlCtx, is_multi_class=True)
+svm = SVM(sqlCtx, is_multi_class=True)
 print('LogisticRegression score: %f' % svm.fit(X_train, y_train).score(X_test, y_test))
 
 # MLPipeline way
 from pyspark.ml import Pipeline
-import SystemML as sml
+from systemml.mllearn import SVM
 from pyspark.ml.feature import HashingTF, Tokenizer
 from pyspark.sql import SQLContext
 sqlCtx = SQLContext(sc)
@@ -888,7 +952,7 @@ training = sqlCtx.createDataFrame([
 ], ["id", "text", "label"])
 tokenizer = Tokenizer(inputCol="text", outputCol="words")
 hashingTF = HashingTF(inputCol="words", outputCol="features", numFeatures=20)
-svm = sml.mllearn.SVM(sqlCtx, is_multi_class=True)
+svm = SVM(sqlCtx, is_multi_class=True)
 pipeline = Pipeline(stages=[tokenizer, hashingTF, svm])
 model = pipeline.fit(training)
 test = sqlCtx.createDataFrame([
@@ -897,6 +961,38 @@ test = sqlCtx.createDataFrame([
     (14L, "mapreduce spark"),
     (15L, "apache hadoop")], ["id", "text"])
 prediction = model.transform(test)
+prediction.show()
+{% endhighlight %}
+</div>
+<div data-lang="Scala" markdown="1">
+{% highlight scala %}
+import org.apache.spark.ml.feature.{HashingTF, Tokenizer}
+import org.apache.sysml.api.ml.SVM
+import org.apache.spark.ml.Pipeline
+val training = sqlContext.createDataFrame(Seq(
+    ("a b c d e spark", 1.0),
+    ("b d", 2.0),
+    ("spark f g h", 1.0),
+    ("hadoop mapreduce", 2.0),
+    ("b spark who", 1.0),
+    ("g d a y", 2.0),
+    ("spark fly", 1.0),
+    ("was mapreduce", 2.0),
+    ("e spark program", 1.0),
+    ("a e c l", 2.0),
+    ("spark compile", 1.0),
+    ("hadoop software", 2.0))).toDF("text", "label")
+val tokenizer = new Tokenizer().setInputCol("text").setOutputCol("words")
+val hashingTF = new HashingTF().setNumFeatures(20).setInputCol(tokenizer.getOutputCol).setOutputCol("features")
+val svm = new SVM("svm", sc, isMultiClass=true)
+val pipeline = new Pipeline().setStages(Array(tokenizer, hashingTF, svm))
+val model = pipeline.fit(training)
+val test = sqlContext.createDataFrame(Seq(
+    ("spark i j k", 1.0),
+    ("l m n", 2.0),
+    ("mapreduce spark", 1.0),
+    ("apache hadoop", 2.0))).toDF("text", "trueLabel")
+val prediction = model.transform(test)
 prediction.show()
 {% endhighlight %}
 </div>
@@ -1026,12 +1122,19 @@ applicable when all features are counts of categorical values.
 <div class="codetabs">
 <div data-lang="Python" markdown="1">
 {% highlight python %}
-import SystemML as sml
-nb = sml.mllearn.NaiveBayes(sqlCtx, laplace=1.0)
+from systemml.mllearn import NaiveBayes
+nb = NaiveBayes(sqlCtx, laplace=1.0)
 # X_train, y_train and X_test can be NumPy matrices or Pandas DataFrame or SciPy Sparse Matrix
 y_test = nb.fit(X_train, y_train)
 # df_train is DataFrame that contains two columns: "features" (of type Vector) and "label". df_test is a DataFrame that contains the column "features"
 y_test = nb.fit(df_train)
+{% endhighlight %}
+</div>
+<div data-lang="Scala" markdown="1">
+{% highlight scala %}
+import org.apache.sysml.api.ml.NaiveBayes
+val nb = new NaiveBayes("naiveBayes", sc, isMultiClass=true).setLaplace(1.0)
+val model = nb.fit(X_train_df)
 {% endhighlight %}
 </div>
 <div data-lang="Hadoop" markdown="1">
@@ -1071,6 +1174,11 @@ y_test = nb.fit(df_train)
 y_test = nb.predict(X_test)
 # df_test is a DataFrame that contains the column "features" of type Vector
 y_test = nb.transform(df_test)
+{% endhighlight %}
+</div>
+<div data-lang="Scala" markdown="1">
+{% highlight scala %}
+val prediction = model.transform(X_test_df)
 {% endhighlight %}
 </div>
 <div data-lang="Hadoop" markdown="1">
@@ -1149,7 +1257,7 @@ SystemML Language Reference for details.
 {% highlight python %}
 from sklearn.datasets import fetch_20newsgroups
 from sklearn.feature_extraction.text import TfidfVectorizer
-import SystemML as sml
+from systemml.mllearn import NaiveBayes
 from sklearn import metrics
 from pyspark.sql import SQLContext
 sqlCtx = SQLContext(sc)
@@ -1160,7 +1268,7 @@ vectorizer = TfidfVectorizer()
 # Both vectors and vectors_test are SciPy CSR matrix
 vectors = vectorizer.fit_transform(newsgroups_train.data)
 vectors_test = vectorizer.transform(newsgroups_test.data)
-nb = sml.mllearn.NaiveBayes(sqlCtx)
+nb = NaiveBayes(sqlCtx)
 nb.fit(vectors, newsgroups_train.target)
 pred = nb.predict(vectors_test)
 metrics.f1_score(newsgroups_test.target, pred, average='weighted')

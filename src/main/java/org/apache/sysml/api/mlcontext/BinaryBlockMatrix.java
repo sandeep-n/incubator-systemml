@@ -21,6 +21,7 @@ package org.apache.sysml.api.mlcontext;
 
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.sql.DataFrame;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
@@ -28,7 +29,7 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 
 /**
- * BinaryBlockMatrix stores data as a SystemML binary-block representation.
+ * BinaryBlockMatrix stores data as a SystemML binary-block matrix representation.
  *
  */
 public class BinaryBlockMatrix {
@@ -46,7 +47,7 @@ public class BinaryBlockMatrix {
 	 */
 	public BinaryBlockMatrix(DataFrame dataFrame, MatrixMetadata matrixMetadata) {
 		this.matrixMetadata = matrixMetadata;
-		binaryBlocks = MLContextConversionUtil.dataFrameToBinaryBlocks(dataFrame, matrixMetadata);
+		binaryBlocks = MLContextConversionUtil.dataFrameToMatrixBinaryBlocks(dataFrame, matrixMetadata);
 	}
 
 	/**
@@ -61,8 +62,8 @@ public class BinaryBlockMatrix {
 	 *            the number of columns
 	 */
 	public BinaryBlockMatrix(DataFrame dataFrame, long numRows, long numCols) {
-		this(dataFrame, new MatrixMetadata(numRows, numCols, MLContextUtil.defaultBlockSize(),
-				MLContextUtil.defaultBlockSize()));
+		this(dataFrame, new MatrixMetadata(numRows, numCols, 
+				ConfigurationManager.getBlocksize(), ConfigurationManager.getBlocksize()));
 	}
 
 	/**
@@ -99,12 +100,20 @@ public class BinaryBlockMatrix {
 	public JavaPairRDD<MatrixIndexes, MatrixBlock> getBinaryBlocks() {
 		return binaryBlocks;
 	}
-	
-	public MatrixBlock getMatrixBlock() throws DMLRuntimeException {
-		MatrixCharacteristics mc = getMatrixCharacteristics();
-		MatrixBlock mb = SparkExecutionContext.toMatrixBlock(binaryBlocks, (int) mc.getRows(), (int) mc.getCols(), 
-				mc.getRowsPerBlock(), mc.getColsPerBlock(), mc.getNonZeros());
-		return mb;
+
+	/**
+	 * Obtain a SystemML binary-block matrix as a {@code MatrixBlock}
+	 * 
+	 * @return the SystemML binary-block matrix as a {@code MatrixBlock}
+	 */
+	public MatrixBlock getMatrixBlock() {
+		try {
+			MatrixCharacteristics mc = getMatrixCharacteristics();
+			return SparkExecutionContext.toMatrixBlock(binaryBlocks, (int) mc.getRows(), (int) mc.getCols(),
+					mc.getRowsPerBlock(), mc.getColsPerBlock(), mc.getNonZeros());
+		} catch (DMLRuntimeException e) {
+			throw new MLContextException("Exception while getting MatrixBlock from binary-block matrix", e);
+		}
 	}
 
 	/**

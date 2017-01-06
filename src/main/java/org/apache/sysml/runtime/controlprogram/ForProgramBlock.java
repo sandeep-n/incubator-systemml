@@ -81,11 +81,7 @@ public class ForProgramBlock extends ProgramBlock
 	public void setIncrementInstructions(ArrayList<Instruction> instructions) {
 		_incrementInstructions = instructions;
 	}
-	
-	public void addExitInstruction(Instruction inst) {
-		_exitInstructions.add(inst);
-	}
-	
+
 	public ArrayList<Instruction> getExitInstructions() {
 		return _exitInstructions;
 	}
@@ -171,14 +167,6 @@ public class ForProgramBlock extends ProgramBlock
 		}
 	}
 
-	/**
-	 * 
-	 * @param pos
-	 * @param instructions
-	 * @param ec
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
 	protected IntObject executePredicateInstructions( int pos, ArrayList<Instruction> instructions, ExecutionContext ec ) 
 		throws DMLRuntimeException
 	{

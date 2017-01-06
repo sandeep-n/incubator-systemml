@@ -25,14 +25,17 @@ import java.util.Iterator;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.compress.utils.ConverterUtils;
 import org.apache.sysml.runtime.compress.utils.LinearAlgebraUtils;
+import org.apache.sysml.runtime.functionobjects.Builtin;
 import org.apache.sysml.runtime.functionobjects.KahanFunction;
 import org.apache.sysml.runtime.functionobjects.KahanPlus;
 import org.apache.sysml.runtime.functionobjects.KahanPlusSq;
 import org.apache.sysml.runtime.functionobjects.ReduceAll;
 import org.apache.sysml.runtime.functionobjects.ReduceCol;
 import org.apache.sysml.runtime.functionobjects.ReduceRow;
+import org.apache.sysml.runtime.functionobjects.Builtin.BuiltinCode;
 import org.apache.sysml.runtime.instructions.cp.KahanObject;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.matrix.data.Pair;
 import org.apache.sysml.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysml.runtime.matrix.operators.ScalarOperator;
 
@@ -74,11 +77,8 @@ public class ColGroupRLE extends ColGroupBitmap
 		createCompressedBitmaps(numVals, totalLen, lbitmaps);
 	}
 
-	/**
-	 * Constructor for internal use.
-	 */
-	public ColGroupRLE(int[] colIndices, int numRows, double[] values, char[] bitmaps, int[] bitmapOffs) {
-		super(CompressionType.RLE_BITMAP, colIndices, numRows, values);
+	public ColGroupRLE(int[] colIndices, int numRows, boolean zeros, double[] values, char[] bitmaps, int[] bitmapOffs) {
+		super(CompressionType.RLE_BITMAP, colIndices, numRows, zeros, values);
 		_data = bitmaps;
 		_ptr = bitmapOffs;
 	}
@@ -409,7 +409,7 @@ public class ColGroupRLE extends ColGroupBitmap
 		//fast path: sparse-safe operations
 		// Note that bitmaps don't change and are shallow-copied
 		if( op.sparseSafe || val0==0 ) {
-			return new ColGroupRLE(_colIndexes, _numRows, 
+			return new ColGroupRLE(_colIndexes, _numRows, _zeros,
 					applyScalarOp(op), _data, _ptr);
 		}
 		
@@ -418,7 +418,7 @@ public class ColGroupRLE extends ColGroupBitmap
 		boolean[] lind = computeZeroIndicatorVector();
 		int[] loff = computeOffsets(lind);
 		if( loff.length==0 ) { //empty offset list: go back to fast path
-			return new ColGroupRLE(_colIndexes, _numRows, 
+			return new ColGroupRLE(_colIndexes, _numRows, true,
 					applyScalarOp(op), _data, _ptr);
 		}
 		
@@ -429,29 +429,51 @@ public class ColGroupRLE extends ColGroupBitmap
 		int[] rbitmapOffs = Arrays.copyOf(_ptr, _ptr.length+1);
 		rbitmapOffs[rbitmapOffs.length-1] = rbitmaps.length; 
 		
-		return new ColGroupRLE(_colIndexes, _numRows, 
+		return new ColGroupRLE(_colIndexes, _numRows, loff.length<_numRows,
 				rvalues, rbitmaps, rbitmapOffs);
 	}
 	
 	@Override
 	public void unaryAggregateOperations(AggregateUnaryOperator op, MatrixBlock result) 
-		throws DMLRuntimeException 
+		throws DMLRuntimeException
 	{
-		KahanFunction kplus = (op.aggOp.increOp.fn instanceof KahanPlus) ?
-				KahanPlus.getKahanPlusFnObject() : KahanPlusSq.getKahanPlusSqFnObject();
-		
-		if( op.indexFn instanceof ReduceAll )
-			computeSum(result, kplus);
-		else if( op.indexFn instanceof ReduceCol )
-			computeRowSums(result, kplus);
-		else if( op.indexFn instanceof ReduceRow )
-			computeColSums(result, kplus);
+		unaryAggregateOperations(op, result, 0, getNumRows());
 	}
 	
-	/**
-	 * 
-	 * @param result
-	 */
+	
+	@Override
+	public void unaryAggregateOperations(AggregateUnaryOperator op, MatrixBlock result, int rl, int ru) 
+		throws DMLRuntimeException 
+	{
+		//sum and sumsq (reduceall/reducerow over tuples and counts)
+		if( op.aggOp.increOp.fn instanceof KahanPlus || op.aggOp.increOp.fn instanceof KahanPlusSq ) 
+		{
+			KahanFunction kplus = (op.aggOp.increOp.fn instanceof KahanPlus) ?
+					KahanPlus.getKahanPlusFnObject() : KahanPlusSq.getKahanPlusSqFnObject();
+			
+			if( op.indexFn instanceof ReduceAll )
+				computeSum(result, kplus);
+			else if( op.indexFn instanceof ReduceCol )
+				computeRowSums(result, kplus, rl, ru);
+			else if( op.indexFn instanceof ReduceRow )
+				computeColSums(result, kplus);
+		}
+		//min and max (reduceall/reducerow over tuples only)
+		else if(op.aggOp.increOp.fn instanceof Builtin 
+				&& (((Builtin)op.aggOp.increOp.fn).getBuiltinCode()==BuiltinCode.MAX 
+				|| ((Builtin)op.aggOp.increOp.fn).getBuiltinCode()==BuiltinCode.MIN)) 
+		{		
+			Builtin builtin = (Builtin) op.aggOp.increOp.fn;
+
+			if( op.indexFn instanceof ReduceAll )
+				computeMxx(result, builtin);
+			else if( op.indexFn instanceof ReduceCol )
+				computeRowMxx(result, builtin, rl, ru);
+			else if( op.indexFn instanceof ReduceRow )
+				computeColMxx(result, builtin);
+		}
+	}
+
 	private void computeSum(MatrixBlock result, KahanFunction kplus)
 	{
 		KahanObject kbuff = new KahanObject(result.quickGetValue(0, 0), result.quickGetValue(0, 1));
@@ -479,15 +501,12 @@ public class ColGroupRLE extends ColGroupBitmap
 		result.quickSetValue(0, 0, kbuff._sum);
 		result.quickSetValue(0, 1, kbuff._correction);
 	}
-	
-	/**
-	 * 
-	 * @param result
-	 */
-	private void computeRowSums(MatrixBlock result, KahanFunction kplus)
+
+	private void computeRowSums(MatrixBlock result, KahanFunction kplus, int rl, int ru)
 	{
 		KahanObject kbuff = new KahanObject(0, 0);
 		final int numVals = getNumValues();
+		double[] c = result.getDenseBlock();
 		
 		for (int k = 0; k < numVals; k++) {
 			int boff = _ptr[k];
@@ -495,26 +514,24 @@ public class ColGroupRLE extends ColGroupBitmap
 			double val = sumValues(k);
 					
 			if (val != 0.0) {
-				int curRunStartOff = 0;
-				int curRunEnd = 0;
-				for (int bix = 0; bix < blen; bix+=2) {
+				Pair<Integer,Integer> tmp = skipScanVal(k, rl);
+				int bix = tmp.getKey();
+				int curRunStartOff = tmp.getValue();
+				int curRunEnd = tmp.getValue();
+				for ( ; bix<blen && curRunEnd<ru; bix+=2) {
 					curRunStartOff = curRunEnd + _data[boff+bix];
 					curRunEnd = curRunStartOff + _data[boff+bix+1];
-					for (int rix = curRunStartOff; rix < curRunEnd; rix++) {
-						kbuff.set(result.quickGetValue(rix, 0), result.quickGetValue(rix, 1));
+					for (int rix=curRunStartOff; rix<curRunEnd && rix<ru; rix++) {
+						kbuff.set(c[2*rix], c[2*rix+1]);
 						kplus.execute2(kbuff, val);
-						result.quickSetValue(rix, 0, kbuff._sum);
-						result.quickSetValue(rix, 1, kbuff._correction);
+						c[2*rix] = kbuff._sum;
+						c[2*rix+1] = kbuff._correction;
 					}
 				}
 			}
 		}
 	}
-	
-	/**
-	 * 
-	 * @param result
-	 */
+
 	private void computeColSums(MatrixBlock result, KahanFunction kplus)
 	{
 		KahanObject kbuff = new KahanObject(0, 0);
@@ -540,6 +557,30 @@ public class ColGroupRLE extends ColGroupBitmap
 				kplus.execute3(kbuff, _values[ valOff+j ], count);
 				result.quickSetValue(0, _colIndexes[j], kbuff._sum);
 				result.quickSetValue(1, _colIndexes[j], kbuff._correction);
+			}
+		}
+	}
+
+	private void computeRowMxx(MatrixBlock result, Builtin builtin, int rl, int ru)
+	{
+		//NOTE: zeros handled once for all column groups outside
+		final int numVals = getNumValues();
+		double[] c = result.getDenseBlock();
+		
+		for (int k = 0; k < numVals; k++) {
+			int boff = _ptr[k];
+			int blen = len(k);
+			double val = mxxValues(k, builtin);
+			
+			Pair<Integer,Integer> tmp = skipScanVal(k, rl);
+			int bix = tmp.getKey();
+			int curRunStartOff = tmp.getValue();
+			int curRunEnd = tmp.getValue();
+			for(; bix < blen && curRunEnd < ru; bix+=2) {
+				curRunStartOff = curRunEnd + _data[boff+bix];
+				curRunEnd = curRunStartOff + _data[boff+bix+1];
+				for (int rix=curRunStartOff; rix<curRunEnd && rix<ru; rix++)
+					c[rix] = builtin.execute2(c[rix], val);
 			}
 		}
 	}
@@ -604,10 +645,10 @@ public class ColGroupRLE extends ColGroupBitmap
 	 * fields. Returns array of positions for all values and modifies
 	 * given array of start positions for all values too. 
 	 * 
-	 * @param numVals
-	 * @param rl
-	 * @param astart
-	 * @return
+	 * @param numVals number of values
+	 * @param rl lower row position
+	 * @param astart start positions
+	 * @return array of positions for all values
 	 */
 	private int[] skipScan(int numVals, int rl, int[] astart) {
 		int[] apos = new int[numVals]; 
@@ -632,5 +673,29 @@ public class ColGroupRLE extends ColGroupBitmap
 		}
 		
 		return apos;
+	}
+
+	private Pair<Integer,Integer> skipScanVal(int k, int rl) {
+		int apos = 0; 
+		int astart = 0;
+		
+		if( rl > 0 ) { //rl aligned with blksz	
+			int boff = _ptr[k];
+			int blen = len(k);
+			int bix = 0;
+			int start = 0;
+			while( bix<blen ) {	
+				int lstart = _data[boff + bix]; //start
+				int llen = _data[boff + bix + 1]; //len
+				if( start+lstart+llen >= rl )
+					break;
+				start += lstart + llen;
+				bix += 2;
+			}
+			apos = bix;
+			astart = start;
+		}
+		
+		return new Pair<Integer,Integer>(apos, astart);
 	}
 }

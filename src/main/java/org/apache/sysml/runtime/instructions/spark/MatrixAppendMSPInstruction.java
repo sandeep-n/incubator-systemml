@@ -30,8 +30,6 @@ import scala.Tuple2;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
-import org.apache.sysml.runtime.functionobjects.OffsetColumnIndex;
-import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.instructions.spark.data.LazyIterableIterator;
 import org.apache.sysml.runtime.instructions.spark.data.PartitionedBroadcast;
@@ -42,34 +40,12 @@ import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.OperationsOnMatrixValues;
 import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.Operator;
-import org.apache.sysml.runtime.matrix.operators.ReorgOperator;
 
 public class MatrixAppendMSPInstruction extends AppendMSPInstruction
 {
 	public MatrixAppendMSPInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand offset, CPOperand out, boolean cbind, String opcode, String istr)
 	{
 		super(op, in1, in2, offset, out, cbind, opcode, istr);
-	}
-	
-	public static MatrixAppendMSPInstruction parseInstruction ( String str ) 
-		throws DMLRuntimeException 
-	{
-		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
-		InstructionUtils.checkNumFields (parts, 5);
-		
-		String opcode = parts[0];
-		CPOperand in1 = new CPOperand(parts[1]);
-		CPOperand in2 = new CPOperand(parts[2]);
-		CPOperand offset = new CPOperand(parts[3]);
-		CPOperand out = new CPOperand(parts[4]);
-		boolean cbind = Boolean.parseBoolean(parts[5]);
-		
-		if(!opcode.equalsIgnoreCase("mappend"))
-			throw new DMLRuntimeException("Unknown opcode while parsing a MatrixAppendMSPInstruction: " + str);
-		
-		return new MatrixAppendMSPInstruction(
-				new ReorgOperator(OffsetColumnIndex.getOffsetColumnIndexFnObject(-1)), 
-				in1, in2, offset, out, cbind, opcode, str);
 	}
 	
 	@Override
@@ -105,13 +81,7 @@ public class MatrixAppendMSPInstruction extends AppendMSPInstruction
 		sec.addLineageRDD(output.getName(), input1.getName());
 		sec.addLineageBroadcast(output.getName(), input2.getName());
 	}
-	
-	/**
-	 * 
-	 * @param mcIn1
-	 * @param mcIn2
-	 * @return
-	 */
+
 	private boolean preservesPartitioning( MatrixCharacteristics mcIn1, MatrixCharacteristics mcIn2, boolean cbind )
 	{
 		long ncblksIn1 = cbind ?
@@ -124,10 +94,7 @@ public class MatrixAppendMSPInstruction extends AppendMSPInstruction
 		//mappend is partitioning-preserving if in-block append (e.g., common case of colvector append)
 		return (ncblksIn1 == ncblksOut);
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class MapSideAppendFunction implements  PairFlatMapFunction<Tuple2<MatrixIndexes,MatrixBlock>, MatrixIndexes, MatrixBlock> 
 	{
 		private static final long serialVersionUID = 2738541014432173450L;
@@ -219,10 +186,7 @@ public class MatrixAppendMSPInstruction extends AppendMSPInstruction
 			return ret;
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class MapSideAppendPartitionFunction implements  PairFlatMapFunction<Iterator<Tuple2<MatrixIndexes,MatrixBlock>>, MatrixIndexes, MatrixBlock> 
 	{
 		private static final long serialVersionUID = 5767240739761027220L;
@@ -242,7 +206,7 @@ public class MatrixAppendMSPInstruction extends AppendMSPInstruction
 		}
 
 		@Override
-		public Iterable<Tuple2<MatrixIndexes, MatrixBlock>> call(Iterator<Tuple2<MatrixIndexes, MatrixBlock>> arg0)
+		public LazyIterableIterator<Tuple2<MatrixIndexes, MatrixBlock>> call(Iterator<Tuple2<MatrixIndexes, MatrixBlock>> arg0)
 			throws Exception 
 		{
 			return new MapAppendPartitionIterator(arg0);

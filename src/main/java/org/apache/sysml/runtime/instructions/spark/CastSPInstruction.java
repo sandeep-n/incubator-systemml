@@ -22,6 +22,7 @@ package org.apache.sysml.runtime.instructions.spark;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.lops.UnaryCP;
+import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
@@ -34,6 +35,7 @@ import org.apache.sysml.runtime.matrix.data.FrameBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.operators.Operator;
+import org.apache.sysml.runtime.util.UtilFunctions;
 
 
 public class CastSPInstruction extends UnarySPInstruction
@@ -88,5 +90,11 @@ public class CastSPInstruction extends UnarySPInstruction
 		sec.setRDDHandleForVariable(output.getName(), out);
 		updateUnaryOutputMatrixCharacteristics(sec, input1.getName(), output.getName());
 		sec.addLineageRDD(output.getName(), input1.getName());
+		
+		//update schema information for output frame
+		if( opcode.equals(UnaryCP.CAST_AS_FRAME_OPCODE) ) {
+			sec.getFrameObject(output.getName()).setSchema(
+				UtilFunctions.nCopies((int)mcIn.getCols(), ValueType.DOUBLE));
+		}
 	}
 }

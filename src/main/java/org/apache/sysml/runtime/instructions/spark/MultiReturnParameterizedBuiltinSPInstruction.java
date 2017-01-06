@@ -23,8 +23,8 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map.Entry;
 
 import org.apache.spark.Accumulator;
@@ -78,17 +78,7 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 		_sptype = SPINSTRUCTION_TYPE.MultiReturnBuiltin;
 		_outputs = outputs;
 	}
-	
-	public CPOperand getOutput(int i) {
-		return _outputs.get(i);
-	}
-	
-	/**
-	 * 
-	 * @param str
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	public static MultiReturnParameterizedBuiltinSPInstruction parseInstruction( String str ) 
 		throws DMLRuntimeException 
 	{
@@ -127,7 +117,7 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 			String spec = ec.getScalarInput(input2.getName(), input2.getValueType(), input2.isLiteral()).getStringValue();
 			MatrixCharacteristics mcIn = sec.getMatrixCharacteristics(input1.getName());
 			MatrixCharacteristics mcOut = sec.getMatrixCharacteristics(output.getName());
-			List<String> colnames = !TfMetaUtils.isIDSpecification(spec) ?
+			String[] colnames = !TfMetaUtils.isIDSpecification(spec) ?
 					in.lookup(1L).get(0).getColumnNames() : null; 
 					
 			//step 1: build transform meta data
@@ -183,12 +173,7 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 			throw new RuntimeException(ex);
 		}
 	}
-	
-	/**
-	 * 
-	 * @param encoder
-	 * @return
-	 */
+
 	private boolean containsMVImputeEncoder(Encoder encoder) {
 		if( encoder instanceof EncoderComposite )
 			for( Encoder cencoder : ((EncoderComposite)encoder).getEncoders() )
@@ -196,12 +181,7 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 					return true;
 		return false;	
 	}
-	
-	/**
-	 * 
-	 * @param encoder
-	 * @return
-	 */
+
 	private MVImputeAgent getMVImputeEncoder(Encoder encoder) {
 		if( encoder instanceof EncoderComposite )
 			for( Encoder cencoder : ((EncoderComposite)encoder).getEncoders() )
@@ -211,47 +191,54 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 	}
 	
 	/**
-	 * 
+	 * This function pre-aggregates distinct values of recoded columns per partition
+	 * (part of distributed recode map construction, used for recoding, binning and 
+	 * dummy coding). We operate directly over schema-specific objects to avoid 
+	 * unnecessary string conversion, as well as reduce memory overhead and shuffle.
 	 */
-	public static class TransformEncodeBuildFunction implements PairFlatMapFunction<Iterator<Tuple2<Long, FrameBlock>>, Integer, String>
+	public static class TransformEncodeBuildFunction 
+		implements PairFlatMapFunction<Iterator<Tuple2<Long, FrameBlock>>, Integer, Object>
 	{
 		private static final long serialVersionUID = 6336375833412029279L;
 
-		private Encoder _encoder = null;
+		private RecodeAgent _raEncoder = null;
 		
 		public TransformEncodeBuildFunction(Encoder encoder) {
-			_encoder = encoder;
+			for( Encoder cEncoder : ((EncoderComposite)encoder).getEncoders() )
+				if( cEncoder instanceof RecodeAgent )
+					_raEncoder = (RecodeAgent)cEncoder;
 		}
 		
 		@Override
-		public Iterable<Tuple2<Integer, String>> call(Iterator<Tuple2<Long, FrameBlock>> iter)
+		public Iterable<Tuple2<Integer, Object>> call(Iterator<Tuple2<Long, FrameBlock>> iter)
 			throws Exception 
 		{
 			//build meta data (e.g., recode maps)
 			while( iter.hasNext() ) {
-				_encoder.build(iter.next()._2());	
+				_raEncoder.buildPartial(iter.next()._2());	
 			}
 			
 			//output recode maps as columnID - token pairs
-			ArrayList<Tuple2<Integer,String>> ret = new ArrayList<Tuple2<Integer,String>>();
-			if( _encoder instanceof EncoderComposite )
-				for( Encoder cEncoder : ((EncoderComposite)_encoder).getEncoders() )
-					if( cEncoder instanceof RecodeAgent ) {
-						RecodeAgent ra = (RecodeAgent) cEncoder;
-						HashMap<Integer,HashMap<String,Long>> tmp = ra.getCPRecodeMaps();
-						for( Entry<Integer,HashMap<String,Long>> e1 : tmp.entrySet() )
-							for( String token : e1.getValue().keySet() )
-								ret.add(new Tuple2<Integer,String>(e1.getKey(), token));
-					}
-				
+			ArrayList<Tuple2<Integer,Object>> ret = new ArrayList<Tuple2<Integer,Object>>();
+			HashMap<Integer,HashSet<Object>> tmp = _raEncoder.getCPRecodeMapsPartial();
+			for( Entry<Integer,HashSet<Object>> e1 : tmp.entrySet() )
+				for( Object token : e1.getValue() )
+					ret.add(new Tuple2<Integer,Object>(e1.getKey(), token));
+			_raEncoder.getCPRecodeMapsPartial().clear();
+		
 			return ret;
 		}
 	}
 	
 	/**
-	 * 
+	 * This function assigns codes to globally distinct values of recoded columns 
+	 * and writes the resulting column map in textcell (IJV) format to the output. 
+	 * (part of distributed recode map construction, used for recoding, binning and 
+	 * dummy coding). We operate directly over schema-specific objects to avoid 
+	 * unnecessary string conversion, as well as reduce memory overhead and shuffle.
 	 */
-	public static class TransformEncodeGroupFunction implements FlatMapFunction<Tuple2<Integer, Iterable<String>>, String>
+	public static class TransformEncodeGroupFunction 
+		implements FlatMapFunction<Tuple2<Integer, Iterable<Object>>, String>
 	{
 		private static final long serialVersionUID = -1034187226023517119L;
 
@@ -262,11 +249,11 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 		}
 		
 		@Override
-		public Iterable<String> call(Tuple2<Integer, Iterable<String>> arg0)
+		public Iterable<String> call(Tuple2<Integer, Iterable<Object>> arg0)
 			throws Exception 
 		{
 			String colID = String.valueOf(arg0._1());
-			Iterator<String> iter = arg0._2().iterator();
+			Iterator<Object> iter = arg0._2().iterator();
 			
 			ArrayList<String> ret = new ArrayList<String>();
 			StringBuilder sb = new StringBuilder();
@@ -276,7 +263,8 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 				sb.append(' ');
 				sb.append(colID);
 				sb.append(' ');
-				sb.append(RecodeAgent.constructRecodeMapEntry(iter.next(), rowID));
+				sb.append(RecodeAgent.constructRecodeMapEntry(
+						iter.next().toString(), rowID));
 				ret.add(sb.toString());
 				sb.setLength(0); 
 				rowID++;
@@ -286,10 +274,7 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 			return ret;
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	private static class MaxAcc implements AccumulatorParam<Long>, Serializable 
 	{
 		private static final long serialVersionUID = -3739727823287550826L;
@@ -309,10 +294,7 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 			return Math.max(arg0, arg1);	
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class TransformEncodeBuild2Function implements PairFlatMapFunction<Iterator<Tuple2<Long, FrameBlock>>, Integer, ColumnMetadata>
 	{
 		private static final long serialVersionUID = 6336375833412029279L;
@@ -356,10 +338,7 @@ public class MultiReturnParameterizedBuiltinSPInstruction extends ComputationSPI
 			return ret;
 		}
 	}
-	
-	/**
-	 * 
-	 */
+
 	public static class TransformEncodeGroup2Function implements FlatMapFunction<Tuple2<Integer, Iterable<ColumnMetadata>>, String>
 	{
 		private static final long serialVersionUID = 702100641492347459L;

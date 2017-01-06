@@ -44,15 +44,6 @@ public class Aggregate extends Lop
  
 	private boolean isCorrectionUsed = false;
 	private CorrectionLocationType correctionLocation = CorrectionLocationType.INVALID;
-
-	/**
-	 * @param input - input lop
-	 * @param op - operation type
-	 */
-	public Aggregate(Lop input, Aggregate.OperationTypes op, DataType dt, ValueType vt ) {
-		super(Lop.Type.Aggregate, dt, vt);
-		init ( input, op, dt, vt, ExecType.MR );
-	}
 	
 	public Aggregate(Lop input, Aggregate.OperationTypes op, DataType dt, ValueType vt, ExecType et ) {
 		super(Lop.Type.Aggregate, dt, vt);
@@ -90,10 +81,6 @@ public class Aggregate extends Lop
 		}
 	}
 	
-	/**
-	 * for debugging purposes. 
-	 */
-	
 	public String toString()
 	{
 		return "Operation: " + operation;		
@@ -101,9 +88,9 @@ public class Aggregate extends Lop
 
 	/**
 	 * method to get operation type
-	 * @return
+	 * 
+	 * @return operator type
 	 */
-	 
 	public OperationTypes getOperationType()
 	{
 		return operation;

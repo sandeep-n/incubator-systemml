@@ -24,8 +24,10 @@ import org.apache.hadoop.io.Text;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.sysml.hops.recompile.Recompiler;
 import org.apache.sysml.parser.Expression.DataType;
+import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
+import org.apache.sysml.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
@@ -123,20 +125,13 @@ public class CSVReblockSPInstruction extends UnarySPInstruction
 		if( input1.getDataType() == DataType.MATRIX )
 			out = processMatrixCSVReblockInstruction(sec, mcOut);
 		else if( input1.getDataType() == DataType.FRAME )
-			out = processFrameCSVReblockInstruction(sec, mcOut);
-			
+			out = processFrameCSVReblockInstruction(sec, mcOut, ((FrameObject)obj).getSchema());
+		
 		// put output RDD handle into symbol table
 		sec.setRDDHandleForVariable(output.getName(), out);
 		sec.addLineageRDD(output.getName(), input1.getName());
 	}
-	
-	/**
-	 * 
-	 * @param sec
-	 * @param mcOut
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	@SuppressWarnings("unchecked")
 	protected JavaPairRDD<MatrixIndexes,MatrixBlock> processMatrixCSVReblockInstruction(SparkExecutionContext sec, MatrixCharacteristics mcOut) 
 		throws DMLRuntimeException
@@ -150,16 +145,9 @@ public class CSVReblockSPInstruction extends UnarySPInstruction
 		return RDDConverterUtils.csvToBinaryBlock(sec.getSparkContext(), 
 				in, mcOut, _hasHeader, _delim, _fill, _fillValue);
 	}
-	
-	/**
-	 * 
-	 * @param sec
-	 * @param mcOut
-	 * @return
-	 * @throws DMLRuntimeException
-	 */
+
 	@SuppressWarnings("unchecked")
-	protected JavaPairRDD<Long,FrameBlock> processFrameCSVReblockInstruction(SparkExecutionContext sec, MatrixCharacteristics mcOut) 
+	protected JavaPairRDD<Long,FrameBlock> processFrameCSVReblockInstruction(SparkExecutionContext sec, MatrixCharacteristics mcOut, ValueType[] schema) 
 		throws DMLRuntimeException
 	{
 		//get input rdd (needs to be longwritable/text for consistency with meta data, in case of
@@ -169,6 +157,6 @@ public class CSVReblockSPInstruction extends UnarySPInstruction
 		
 		//reblock csv to binary block
 		return FrameRDDConverterUtils.csvToBinaryBlock(sec.getSparkContext(), 
-				in, mcOut, _hasHeader, _delim, _fill, _fillValue);
+				in, mcOut, schema, _hasHeader, _delim, _fill, _fillValue);
 	}
 }
