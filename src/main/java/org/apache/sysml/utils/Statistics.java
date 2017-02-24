@@ -48,11 +48,9 @@ public class Statistics
 {	
 	private static long compileStartTime = 0;
 	private static long compileEndTime = 0;
-	public static long compileTime = 0; // TODO investigate unused field
 	
 	private static long execStartTime = 0;
 	private static long execEndTime = 0;
-	public static long execTime = 0; // TODO investigate unused field
 
 	// number of compiled/executed MR jobs
 	private static int iNoOfExecutedMRJobs = 0;
@@ -347,6 +345,9 @@ public class Statistics
 		hopRecompilePred.set(0);
 		hopRecompileSB.set(0);
 		
+		funRecompiles.set(0);
+		funRecompileTime.set(0);
+		
 		parforOptCount = 0;
 		parforOptTime = 0;
 		parforInitTime = 0;
@@ -463,9 +464,12 @@ public class Statistics
 		_cpInstCounts.put(key, newCnt);
 	}
 	
-	public static Set<String> getCPHeavyHitterOpCodes()
-	{
+	public static Set<String> getCPHeavyHitterOpCodes() {
 		return _cpInstTime.keySet();
+	}
+	
+	public static long getCPHeavyHitterCount(String opcode) {
+		return _cpInstCounts.get(opcode);
 	}
 
 	@SuppressWarnings("unchecked")

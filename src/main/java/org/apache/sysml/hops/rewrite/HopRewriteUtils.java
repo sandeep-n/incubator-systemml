@@ -60,6 +60,7 @@ import org.apache.sysml.runtime.instructions.cp.DoubleObject;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.instructions.cp.StringObject;
+import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
 public class HopRewriteUtils 
@@ -672,6 +673,11 @@ public class HopRewriteUtils
 			&& hop.getInput().get(1).getDim1() < hop.getInput().get(1).getDim2();
 	}
 	
+	public static boolean isSparse( Hop hop ) {
+		return hop.dimsKnown(true) //dims and nnz known
+			&& MatrixBlock.evalSparseFormatInMemory(hop.getDim1(), hop.getDim2(), hop.getNnz());
+	}
+	
 	public static boolean isEqualValue( LiteralOp hop1, LiteralOp hop2 ) 
 		throws HopsException
 	{
@@ -705,15 +711,26 @@ public class HopRewriteUtils
 		return ret;
 	}
 	
-	public static boolean isTransposeOperation(Hop hop)
-	{
+	public static boolean isTransposeOperation(Hop hop) {
 		return (hop instanceof ReorgOp && ((ReorgOp)hop).getOp()==ReOrgOp.TRANSPOSE);
 	}
 	
-	public static boolean isTransposeOfItself(Hop hop1, Hop hop2)
-	{
+	public static boolean containsTransposeOperation(ArrayList<Hop> hops) {
+		boolean ret = false;
+		for( Hop hop : hops )
+			ret |= isTransposeOperation(hop);
+		return ret;
+	}
+	
+	public static boolean isTransposeOfItself(Hop hop1, Hop hop2) {
 		return hop1 instanceof ReorgOp && ((ReorgOp)hop1).getOp()==ReOrgOp.TRANSPOSE && hop1.getInput().get(0) == hop2
 			|| hop2 instanceof ReorgOp && ((ReorgOp)hop2).getOp()==ReOrgOp.TRANSPOSE && hop2.getInput().get(0) == hop1;	
+	}
+	
+	public static boolean isBinaryMatrixScalarOperation(Hop hop) {
+		return hop instanceof BinaryOp && 
+			((hop.getInput().get(0).getDataType().isMatrix() && hop.getInput().get(1).getDataType().isScalar())
+			||(hop.getInput().get(1).getDataType().isMatrix() && hop.getInput().get(0).getDataType().isScalar()));
 	}
 	
 	public static boolean isNonZeroIndicator(Hop pred, Hop hop )

@@ -34,6 +34,10 @@ import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 
 import scala.collection.Seq;
 
+/**
+ * @deprecated This will be removed in SystemML 1.0. Please migrate to {@link org.apache.sysml.api.mlcontext.MLContext}
+ */
+@Deprecated
 public class MLBlock implements Row {
 
 	private static final long serialVersionUID = -770986277854643424L;
@@ -253,8 +257,8 @@ public class MLBlock implements Row {
 	public static StructType getDefaultSchemaForBinaryBlock() {
 		// TODO:
 		StructField[] fields = new StructField[2];
-		fields[0] = new StructField("IgnoreSchema", DataType.fromCaseClassString("DoubleType"), true, null);
-		fields[1] = new StructField("IgnoreSchema1", DataType.fromCaseClassString("DoubleType"), true, null);
+		fields[0] = new StructField("IgnoreSchema", DataType.fromJson("DoubleType"), true, null);
+		fields[1] = new StructField("IgnoreSchema1", DataType.fromJson("DoubleType"), true, null);
 		return new StructType(fields);
 	}
 

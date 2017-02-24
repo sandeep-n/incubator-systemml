@@ -78,6 +78,7 @@ public class DataExpression extends DataIdentifier
 	public static final String DESCRIPTIONPARAM = "description";
 	public static final String AUTHORPARAM = "author";
 	public static final String SCHEMAPARAM = "schema";
+	public static final String CREATEDPARAM = "created";
 
 	// Parameter names relevant to reading/writing delimited/csv files
 	public static final String DELIM_DELIMITER = "sep";
@@ -100,6 +101,7 @@ public class DataExpression extends DataIdentifier
 	public static final String[] READ_VALID_MTD_PARAM_NAMES = 
 		{ IO_FILENAME, READROWPARAM, READCOLPARAM, READNUMNONZEROPARAM, FORMAT_TYPE,
 			ROWBLOCKCOUNTPARAM, COLUMNBLOCKCOUNTPARAM, DATATYPEPARAM, VALUETYPEPARAM, SCHEMAPARAM, DESCRIPTIONPARAM,
+			AUTHORPARAM, CREATEDPARAM,
 			// Parameters related to delimited/csv files.
 			DELIM_FILL_VALUE, DELIM_DELIMITER, DELIM_FILL, DELIM_HAS_HEADER_ROW, DELIM_NA_STRINGS
 		}; 
@@ -1162,10 +1164,7 @@ public class DataExpression extends DataIdentifier
 				raiseValidateError("for Rand statement " + RAND_MIN + " has incorrect value type", conditional);
 			}
 			
-			//parameters w/o support for variable inputs (requires double/int or string constants)
-			if (!(getVarParam(RAND_SPARSITY) instanceof DoubleIdentifier || getVarParam(RAND_SPARSITY) instanceof IntIdentifier)) {
-				raiseValidateError("for Rand statement " + RAND_SPARSITY + " has incorrect value type", conditional);
-			}
+			// Since sparsity can be arbitrary expression (SYSTEMML-515), no validation check for DoubleIdentifier/IntIdentifier required.
 			
 			if (!(getVarParam(RAND_PDF) instanceof StringIdentifier)) {
 				raiseValidateError("for Rand statement " + RAND_PDF + " has incorrect value type", conditional);
@@ -1767,15 +1766,26 @@ public class DataExpression extends DataIdentifier
 		sb.append(_opcode.toString());
 		sb.append("(");
 
+		boolean first = true;
 		for(Entry<String,Expression> e : _varParams.entrySet()) {
 			String key = e.getKey();
 			Expression expr = e.getValue();
-			sb.append(",");
+			if (!first) {
+				sb.append(", ");
+			} else {
+				first = false;
+			}
 			sb.append(key);
 			sb.append("=");
-			sb.append(expr);
+			if (expr instanceof StringIdentifier) {
+				sb.append("\"");
+				sb.append(expr);
+				sb.append("\"");
+			} else {
+				sb.append(expr);
+			}
 		}
-		sb.append(" )");
+		sb.append(")");
 		return sb.toString();
 	}
 
@@ -1828,7 +1838,10 @@ public class DataExpression extends DataIdentifier
 			{
 				// if the read method does not specify parameter value, then add MTD metadata file value to parameter list
 				if (getVarParam(key.toString()) == null){
-					if ( !key.toString().equalsIgnoreCase(DESCRIPTIONPARAM) ) {
+					if (( !key.toString().equalsIgnoreCase(DESCRIPTIONPARAM) ) &&
+							( !key.toString().equalsIgnoreCase(AUTHORPARAM) ) &&
+							( !key.toString().equalsIgnoreCase(CREATEDPARAM) ) )
+					{
 						StringIdentifier strId = new StringIdentifier(val.toString(),
 								this.getFilename(), this.getBeginLine(), this.getBeginColumn(), 
 								this.getEndLine(), this.getEndColumn());

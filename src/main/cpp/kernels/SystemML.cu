@@ -20,9 +20,10 @@
 /**********************************
 When updating a kernel or adding a new one,
 please compile the ptx file and commit it:
-nvcc -ptx SystemML.cu
+nvcc -ptx -arch=sm_30 SystemML.cu
 ***********************************/
 
+#include <cfloat>
 
 // dim => rlen (Assumption: rlen == clen)
 // N = length of dense array
@@ -39,7 +40,7 @@ __global__ void copyUpperToLowerTriangleDense(double* ret, int dim, int N) {
 }
 
 extern "C"
-__device__ double getBoolean(int val) {
+__forceinline__ __device__ double getBoolean(int val) {
 	if(val == 0)
 		return 0.0;
 	else
@@ -50,39 +51,23 @@ __device__ double getBoolean(int val) {
 // 5=less, 6=lessequal, 7=greater, 8=greaterequal, 9=equal, 10=notequal,
 // 11=min, 12=max, 13=and, 14=or, 15=log}
 extern "C"
-__device__ double binaryOp(double x, double y, int op) {
-	// 0=plus, 1=minus, 2=multiply, 3=divide, 4=power
-	if(op == 0)
-		return x + y;
-	else if(op == 1)
-		return x - y;
-	else if(op == 2)
-		return x * y;
-	else if(op == 3)
-		return x / y;
-	else if(op == 4)
-		return pow(x, y);
-	// 5=less, 6=lessequal, 7=greater, 8=greaterequal, 9=equal, 10=notequal,
-	else if(op == 5)
-		return getBoolean(x < y);
-	else if(op == 6)
-		return getBoolean(x <= y);
-	else if(op == 7)
-		return getBoolean(x > y);
-	else if(op == 8)
-		return getBoolean(x >= y);
-	else if(op == 9)
-		return getBoolean(x == y);
-	else if(op == 10)
-		return getBoolean(x != y);
-	// 11=min, 12=max, 13=and, 14=or, 15=log
-	else if(op == 11) {
-		return min(x, y);
-	}
-	else if(op == 12) {
-		return max(x, y);
-	}
-	return -999;
+__forceinline__ __device__ double binaryOp(double x, double y, int op) {
+	switch(op) {
+        case 0 : return x + y;
+        case 1 : return x - y;
+        case 2 : return x * y;
+        case 3 : return x / y;
+        case 4 : return pow(x, y);
+        case 5 : return getBoolean(x < y);
+        case 6 : return getBoolean(x <= y);
+        case 7 : return getBoolean(x > y);
+        case 8 : return getBoolean(x >= y);
+        case 9 : return getBoolean(x == y);
+        case 10 : return getBoolean(x != y);
+        case 11 : return min(x, y);
+        case 12 : return max(x, y);
+        default : return DBL_MAX;
+    }
 }
 
 extern "C"
@@ -115,6 +100,32 @@ __global__ void relu(double* A,  double* ret, int rlen, int clen) {
 	}
 }
 
+// This method computes the backpropagation errors for previous layer of relu operation
+extern "C"
+__global__ void reluBackward(double* X,  double* dout, double* ret, int rlen, int clen) {
+	int ix = blockIdx.x * blockDim.x + threadIdx.x;
+	int iy = blockIdx.y * blockDim.y + threadIdx.y;
+	if(ix < rlen && iy < clen) {
+		int index = ix * clen + iy;
+		ret[index] = X[index] > 0 ?  dout[index] : 0;
+	}
+}
+
+// Performs the operation corresponding to the DML script:
+// ones = matrix(1, rows=1, cols=Hout*Wout)
+// output = input + matrix(bias %*% ones, rows=1, cols=F*Hout*Wout)
+// This operation is often followed by conv2d and hence we have introduced bias_add(input, bias) built-in function
+extern "C"
+__global__ void biasAdd(double* input,  double* bias, double* ret, int rlen, int clen, int PQ) {
+	int ix = blockIdx.x * blockDim.x + threadIdx.x;
+	int iy = blockIdx.y * blockDim.y + threadIdx.y;
+	if(ix < rlen && iy < clen) {
+		int index = ix * clen + iy;
+		int biasIndex = iy / PQ;
+		ret[index] = input[index] + bias[biasIndex];
+	}
+}
+
 // Compares the value and set
 extern "C"
 __global__ void compareAndSet(double* A,  double* ret, int rlen, int clen, double compareVal, double tol, double ifEqualsVal, double ifLessThanVal, double ifGreaterThanVal) {
@@ -131,8 +142,22 @@ __global__ void compareAndSet(double* A,  double* ret, int rlen, int clen, doubl
 	}
 }
 
+
+/**
+ * Performs a binary cellwise arithmetic operation on 2 matrices.
+ * Either both matrices are of equal size or one of them is a vector or both are.
+ * @param A                 first input matrix allocated on GPU
+ * @param B                 second input matrix allocated on GPU
+ * @param C                 output allocated on GPU
+ * @param maxRlen           maximum of the row lengths of A and B
+ * @param maxClen           maximum of the column lengths of A and B
+ * @param vectorAStatus     if A is a row vector, column vector or neither
+ * @param vectorBStatus     if B is a row vector, column vector or neither
+ * @param op                the numeric code of the arithmetic operation to perform
+ *
+ */
 extern "C"
-__global__ void binCellOp(double* A, double* B, double* C,
+__global__ void matrix_matrix_cellwise_op(double* A, double* B, double* C,
 	int maxRlen, int maxClen, int vectorAStatus, int vectorBStatus, int op) {
 	int ix = blockIdx.x * blockDim.x + threadIdx.x;
 	int iy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -150,21 +175,32 @@ __global__ void binCellOp(double* A, double* B, double* C,
 		else if(vectorBStatus == 2)
 			bIndex = iy; // rlen == 1
 		C[outIndex] = binaryOp(A[aIndex], B[bIndex], op);
-		// printf("C[%d] = A[%d](%f) B[%d](%f) (%d %d)\n", outIndex, aIndex, A[aIndex], bIndex,  B[bIndex], (ix+1), (iy+1));
+		//printf("C[%d] = A[%d](%f) B[%d](%f) (%d %d)\n", outIndex, aIndex, A[aIndex], bIndex,  B[bIndex], (ix+1), (iy+1));
+    __syncthreads();
 	}
 }
 
+/**
+ * Performs an arithmetic operation between a matrix and a scalar.
+ * C = s op A or C = A op s (where A is the matrix, s is the scalar and op is the operation)
+ * @param A             input matrix allocated on GPU
+ * @param scalar        scalar input
+ * @param C             output matrix allocated on GPU
+ * @param size          number of elements in matrix A
+ * @param op            number code of the arithmetic operation to perform
+ * @param isLeftScalar  whether the scalar is on the left side
+ */
 extern "C"
-__global__ void binCellScalarOp(double* A, double scalar, double* C, int rlenA, int clenA, int op, int isLeftScalar) {
-	int ix = blockIdx.x * blockDim.x + threadIdx.x;
-	int iy = blockIdx.y * blockDim.y + threadIdx.y;
-	int index = ix * clenA + iy;
-	if(index < rlenA*clenA) {
-		if(isLeftScalar)
+__global__ void matrix_scalar_op(double* A, double scalar, double* C, int size, int op, int isLeftScalar) {
+	int index = blockIdx.x *blockDim.x + threadIdx.x;
+	if(index < size) {
+		if(isLeftScalar) {
 			C[index] = binaryOp(scalar, A[index], op);
-		else
+		} else {
 			C[index] = binaryOp(A[index], scalar, op);
+    }
 	}
+  __syncthreads();
 }
 
 
@@ -176,15 +212,14 @@ __global__ void binCellScalarOp(double* A, double scalar, double* C, int rlenA, 
  */
 extern "C"
 __global__ void fill(double* A, double scalar, int lenA) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
+  int index = blockIdx.x * blockDim.x + threadIdx.x;
 	if (index < lenA){
 	    A[index] = scalar;
 	}
 }
 
-
 /**
- * Does a reduce (sum) over all elements of the array.
+ * Does a reduce operation over all elements of the array.
  * This method has been adapted from the Reduction sample in the NVIDIA CUDA Samples (v8.0)
  * and the Reduction example available through jcuda.org
  * When invoked initially, all blocks partly compute the reduction operation over the entire array
@@ -193,12 +228,17 @@ __global__ void fill(double* A, double scalar, int lenA) {
  * The number of threads, blocks and amount of shared memory is calculated in a specific way.
  * Please refer to the NVIDIA CUDA Sample or the SystemML code that invokes this method to see
  * how its done.
- * @param g_idata   input data stored in device memory (of size n)
- * @param g_odata   output/temporary array stode in device memory (of size n)
- * @param n         size of the input and temporary/output arrays
+ * The template-ized version of this function is similar to what is found in NVIDIA CUB
+ *
+ * @param ReductionOp       Type of the functor object that implements the reduction operation
  */
-extern "C"
-__global__ void reduce(double *g_idata, double *g_odata, unsigned int n)
+template <typename ReductionOp>
+__device__ void reduce(
+    double *g_idata,            ///< input data stored in device memory (of size n)
+    double *g_odata,            ///< output/temporary array stored in device memory (of size n)
+    unsigned int n,             ///< size of the input and temporary/output arrays
+    ReductionOp reduction_op,	///< Reduction operation to perform (functor object)
+	double initialValue)  		///< initial value for the reduction variable
 {
     extern __shared__ double sdata[];
 
@@ -208,29 +248,30 @@ __global__ void reduce(double *g_idata, double *g_odata, unsigned int n)
     unsigned int i = blockIdx.x*blockDim.x*2 + threadIdx.x;
     unsigned int gridSize = blockDim.x*2*gridDim.x;
 
-    double mySum = 0;
+    double v = initialValue;
 
     // we reduce multiple elements per thread.  The number is determined by the
     // number of active thread blocks (via gridDim).  More blocks will result
     // in a larger gridSize and therefore fewer elements per thread
     while (i < n)
     {
-        mySum += g_idata[i];
+        v = reduction_op(v, g_idata[i]);
         // ensure we don't read out of bounds
         if (i + blockDim.x < n)
-            mySum += g_idata[i+blockDim.x];
+            v = reduction_op(v, g_idata[i+blockDim.x]);
         i += gridSize;
     }
 
     // each thread puts its local sum into shared memory
-    sdata[tid] = mySum;
+    sdata[tid] = v;
     __syncthreads();
 
 
     // do reduction in shared mem
-    if (blockDim.x >= 512) { if (tid < 256) { sdata[tid] = mySum = mySum + sdata[tid + 256]; } __syncthreads(); }
-    if (blockDim.x >= 256) { if (tid < 128) { sdata[tid] = mySum = mySum + sdata[tid + 128]; } __syncthreads(); }
-    if (blockDim.x >= 128) { if (tid <  64) { sdata[tid] = mySum = mySum + sdata[tid +  64]; } __syncthreads(); }
+		if (blockDim.x >= 1024){ if (tid < 512) { sdata[tid] = v = reduction_op(v, sdata[tid + 512]); } __syncthreads(); }
+    if (blockDim.x >= 512) { if (tid < 256) { sdata[tid] = v = reduction_op(v, sdata[tid + 256]); } __syncthreads(); }
+    if (blockDim.x >= 256) { if (tid < 128) { sdata[tid] = v = reduction_op(v, sdata[tid + 128]); } __syncthreads(); }
+    if (blockDim.x >= 128) { if (tid <  64) { sdata[tid] = v = reduction_op(v, sdata[tid +  64]); } __syncthreads(); }
 
     if (tid < 32)
     {
@@ -238,18 +279,19 @@ __global__ void reduce(double *g_idata, double *g_odata, unsigned int n)
         // we need to declare our shared memory volatile so that the compiler
         // doesn't reorder stores to it and induce incorrect behavior.
         volatile double* smem = sdata;
-        if (blockDim.x >=  64) { smem[tid] = mySum = mySum + smem[tid + 32]; }
-        if (blockDim.x >=  32) { smem[tid] = mySum = mySum + smem[tid + 16]; }
-        if (blockDim.x >=  16) { smem[tid] = mySum = mySum + smem[tid +  8]; }
-        if (blockDim.x >=   8) { smem[tid] = mySum = mySum + smem[tid +  4]; }
-        if (blockDim.x >=   4) { smem[tid] = mySum = mySum + smem[tid +  2]; }
-        if (blockDim.x >=   2) { smem[tid] = mySum = mySum + smem[tid +  1]; }
+        if (blockDim.x >=  64) { smem[tid] = v = reduction_op(v, smem[tid + 32]); }
+        if (blockDim.x >=  32) { smem[tid] = v = reduction_op(v, smem[tid + 16]); }
+        if (blockDim.x >=  16) { smem[tid] = v = reduction_op(v, smem[tid +  8]); }
+        if (blockDim.x >=   8) { smem[tid] = v = reduction_op(v, smem[tid +  4]); }
+        if (blockDim.x >=   4) { smem[tid] = v = reduction_op(v, smem[tid +  2]); }
+        if (blockDim.x >=   2) { smem[tid] = v = reduction_op(v, smem[tid +  1]); }
     }
 
     // write result for this block to global mem
     if (tid == 0)
         g_odata[blockIdx.x] = sdata[0];
 }
+
 
 
 /**
@@ -260,14 +302,20 @@ __global__ void reduce(double *g_idata, double *g_odata, unsigned int n)
  * This works out fine for SystemML, since the maximum elements in a Java array can be 2^31 - c (some small constant)
  * If the matrix is "fat" and "short", i.e. there are small number of rows and a large number of columns,
  * there could be under-utilization of the hardware.
- * @param g_idata   input matrix stored in device memory
- * @param g_odata   output vector of size [rows * 1] in device memory
- * @param rows      number of rows in input matrix
- * @param cols      number of columns in input matrix
+ * The template-ized version of this function is similar to what is found in NVIDIA CUB
+ * @param ReductionOp       Type of the functor object that implements the reduction operation
+ * @param AssignmentOp      Type of the functor object that is used to modify the value before writing it to its final location in global memory for each row
  */
-extern "C"
-__global__ void reduce_row(double *g_idata, double *g_odata, unsigned int rows, unsigned int cols)
-{
+template <typename ReductionOp,
+          typename AssignmentOp>
+__device__ void reduce_row(
+    double *g_idata,            ///< input data stored in device memory (of size rows*cols)
+    double *g_odata,            ///< output/temporary array store in device memory (of size rows*cols)
+    unsigned int rows,          ///< rows in input and temporary/output arrays
+    unsigned int cols,          ///< columns in input and temporary/output arrays
+    ReductionOp reduction_op,		///< Reduction operation to perform (functor object)
+    AssignmentOp assignment_op, ///< Operation to perform before assigning this to its final location in global memory for each row
+    double initialValue){  			///< initial value for the reduction variable
     extern __shared__ double sdata[];
 
     // one block per row
@@ -280,21 +328,21 @@ __global__ void reduce_row(double *g_idata, double *g_odata, unsigned int rows, 
     unsigned int i = tid;
     unsigned int block_offset = block * cols;
 
-    double mySum = 0;
+    double v = initialValue;
     while (i < cols){
-        mySum += g_idata[block_offset + i];
+        v = reduction_op(v, g_idata[block_offset + i]);
         i += blockDim.x;
     }
 
     // each thread puts its local sum into shared memory
-    sdata[tid] = mySum;
+    sdata[tid] = v;
     __syncthreads();
 
-
-    // do reduction in shared mem
-    if (blockDim.x >= 512) { if (tid < 256) { sdata[tid] = mySum = mySum + sdata[tid + 256]; } __syncthreads(); }
-    if (blockDim.x >= 256) { if (tid < 128) { sdata[tid] = mySum = mySum + sdata[tid + 128]; } __syncthreads(); }
-    if (blockDim.x >= 128) { if (tid <  64) { sdata[tid] = mySum = mySum + sdata[tid +  64]; } __syncthreads(); }
+ 		// do reduction in shared mem
+  	if (blockDim.x >= 1024){ if (tid < 512) { sdata[tid] = v = reduction_op(v, sdata[tid + 512]); } __syncthreads(); }
+    if (blockDim.x >= 512) { if (tid < 256) { sdata[tid] = v = reduction_op(v, sdata[tid + 256]); } __syncthreads(); }
+    if (blockDim.x >= 256) { if (tid < 128) { sdata[tid] = v = reduction_op(v, sdata[tid + 128]); } __syncthreads(); }
+    if (blockDim.x >= 128) { if (tid <  64) { sdata[tid] = v = reduction_op(v, sdata[tid +  64]); } __syncthreads(); }
 
     if (tid < 32)
     {
@@ -302,33 +350,41 @@ __global__ void reduce_row(double *g_idata, double *g_odata, unsigned int rows, 
         // we need to declare our shared memory volatile so that the compiler
         // doesn't reorder stores to it and induce incorrect behavior.
         volatile double* smem = sdata;
-        if (blockDim.x >=  64) { smem[tid] = mySum = mySum + smem[tid + 32]; }
-        if (blockDim.x >=  32) { smem[tid] = mySum = mySum + smem[tid + 16]; }
-        if (blockDim.x >=  16) { smem[tid] = mySum = mySum + smem[tid +  8]; }
-        if (blockDim.x >=   8) { smem[tid] = mySum = mySum + smem[tid +  4]; }
-        if (blockDim.x >=   4) { smem[tid] = mySum = mySum + smem[tid +  2]; }
-        if (blockDim.x >=   2) { smem[tid] = mySum = mySum + smem[tid +  1]; }
+        if (blockDim.x >=  64) { smem[tid] = v = reduction_op(v, smem[tid + 32]); }
+        if (blockDim.x >=  32) { smem[tid] = v = reduction_op(v, smem[tid + 16]); }
+        if (blockDim.x >=  16) { smem[tid] = v = reduction_op(v, smem[tid +  8]); }
+        if (blockDim.x >=   8) { smem[tid] = v = reduction_op(v, smem[tid +  4]); }
+        if (blockDim.x >=   4) { smem[tid] = v = reduction_op(v, smem[tid +  2]); }
+        if (blockDim.x >=   2) { smem[tid] = v = reduction_op(v, smem[tid +  1]); }
     }
 
-    // write result for this block to global mem
+    // write result for this block to global mem, modify it with assignment op
     if (tid == 0)
-        g_odata[block] = sdata[0];
+        g_odata[block] = assignment_op(sdata[0]);
 }
 
 
 /**
  * Does a column wise reduction.
  * The intuition is that there are as many global threads as there are columns
- *  Each global thread is responsible for a single element in the output vector
+ * Each global thread is responsible for a single element in the output vector
  * This of course leads to a under-utilization of the GPU resources.
  * For cases, where the number of columns is small, there can be unused SMs
- * @param g_idata   input matrix stored in device memory
- * @param g_odata   output vector of size [1 * cols] in device memory
- * @param rows      number of rows in input matrix
- * @param cols      number of columns in input matrix
+ *
+ * The template-ized version of this function is similar to what is found in NVIDIA CUB
+ * @param ReductionOp       Type of the functor object that implements the reduction operation
+ * @param AssignmentOp      Type of the functor object that is used to modify the value before writing it to its final location in global memory for each column
  */
-extern "C"
-__global__ void reduce_col(double *g_idata, double *g_odata, unsigned int rows, unsigned int cols)
+template <typename ReductionOp,
+          typename AssignmentOp>
+__device__ void reduce_col(
+    double *g_idata,            ///< input data stored in device memory (of size rows*cols)
+    double *g_odata,            ///< output/temporary array store in device memory (of size rows*cols)
+    unsigned int rows,          ///< rows in input and temporary/output arrays
+    unsigned int cols,          ///< columns in input and temporary/output arrays
+    ReductionOp reduction_op,	///< Reduction operation to perform (functor object)
+    AssignmentOp assignment_op, ///< Operation to perform before assigning this to its final location in global memory for each column
+    double initialValue)  		///< initial value for the reduction variable
 {
     unsigned int global_tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (global_tid >= cols) {
@@ -337,11 +393,238 @@ __global__ void reduce_col(double *g_idata, double *g_odata, unsigned int rows, 
 
     unsigned int i = global_tid;
     unsigned int grid_size = cols;
-    double val = 0;
+    double val = initialValue;
 
     while (i < rows * cols) {
-      val += g_idata[i];
+      val = reduction_op(val, g_idata[i]);
       i += grid_size;
     }
-    g_odata[global_tid] = val;
+    g_odata[global_tid] = assignment_op(val);
+}
+
+/**
+ * Functor op for assignment op. This is a dummy/identity op.
+ */
+typedef struct {
+    __device__ __forceinline__
+    double operator()(double a) const {
+        return a;
+    }
+} IdentityOp;
+
+/**
+ * Functor op for summation operation
+ */
+typedef struct {
+    __device__ __forceinline__
+    double operator()(double a, double b) const {
+        return a + b;
+    }
+} SumOp;
+
+
+/**
+ * Do a summation over all elements of an array/matrix
+ * @param g_idata   input data stored in device memory (of size n)
+ * @param g_odata   output/temporary array stored in device memory (of size n)
+ * @param n         size of the input and temporary/output arrays
+ */
+extern "C"
+__global__ void reduce_sum(double *g_idata, double *g_odata, unsigned int n){
+	SumOp op;
+  reduce<SumOp>(g_idata, g_odata, n, op, 0.0);
+}
+
+/**
+ * Do a summation over all rows of a matrix
+ * @param g_idata   input matrix stored in device memory (of size rows * cols)
+ * @param g_odata   output vector stored in device memory (of size rows)
+ * @param rows      number of rows in input matrix
+ * @param cols      number of columns in input matrix
+ */
+extern "C"
+__global__ void reduce_row_sum(double *g_idata, double *g_odata, unsigned int rows, unsigned int cols){
+    SumOp op;
+    IdentityOp aop;
+    reduce_row<SumOp, IdentityOp>(g_idata, g_odata, rows, cols, op, aop, 0.0);
+}
+
+/**
+ * Do a summation over all columns of a matrix
+ * @param g_idata   input matrix stored in device memory (of size rows * cols)
+ * @param g_odata   output vector stored in device memory (of size cols)
+ * @param rows      number of rows in input matrix
+ * @param cols      number of columns in input matrix
+ */
+extern "C"
+__global__ void reduce_col_sum(double *g_idata, double *g_odata, unsigned int rows, unsigned int cols){
+    SumOp op;
+    IdentityOp aop;
+    reduce_col<SumOp, IdentityOp>(g_idata, g_odata, rows, cols, op, aop, 0.0);
+}
+
+
+/**
+ * Functor op for max operation
+ */
+typedef struct {
+    __device__ __forceinline__
+    double operator()(double a, double b) const {
+        return fmax(a, b);
+    }
+} MaxOp;
+
+
+/**
+ * Do a max over all elements of an array/matrix
+ * @param g_idata   input data stored in device memory (of size n)
+ * @param g_odata   output/temporary array stode in device memory (of size n)
+ * @param n         size of the input and temporary/output arrays
+ */
+extern "C"
+__global__ void reduce_max(double *g_idata, double *g_odata, unsigned int n){
+    MaxOp op;
+    reduce<MaxOp>(g_idata, g_odata, n, op, -DBL_MAX);
+}
+
+/**
+ * Do a max over all rows of a matrix
+ * @param g_idata   input matrix stored in device memory (of size rows * cols)
+ * @param g_odata   output vector stored in device memory (of size rows)
+ * @param rows      number of rows in input matrix
+ * @param cols      number of columns in input matrix
+ */
+extern "C"
+__global__ void reduce_row_max(double *g_idata, double *g_odata, unsigned int rows, unsigned int cols){
+    MaxOp op;
+    IdentityOp aop;
+    reduce_row<MaxOp, IdentityOp>(g_idata, g_odata, rows, cols, op, aop, -DBL_MAX);
+}
+
+/**
+ * Do a max over all columns of a matrix
+ * @param g_idata   input matrix stored in device memory (of size rows * cols)
+ * @param g_odata   output vector stored in device memory (of size cols)
+ * @param rows      number of rows in input matrix
+ * @param cols      number of columns in input matrix
+ */
+extern "C"
+__global__ void reduce_col_max(double *g_idata, double *g_odata, unsigned int rows, unsigned int cols){
+    MaxOp op;
+    IdentityOp aop;
+    reduce_col<MaxOp, IdentityOp>(g_idata, g_odata, rows, cols, op, aop, -DBL_MAX);
+}
+
+/**
+ * Functor op for min operation
+ */
+typedef struct {
+    __device__ __forceinline__
+    double operator()(double a, double b) const {
+        return fmin(a, b);
+    }
+} MinOp;
+
+/**
+ * Do a min over all elements of an array/matrix
+ * @param g_idata   input data stored in device memory (of size n)
+ * @param g_odata   output/temporary array stode in device memory (of size n)
+ * @param n         size of the input and temporary/output arrays
+ */
+extern "C"
+__global__ void reduce_min(double *g_idata, double *g_odata, unsigned int n){
+	MinOp op;
+    reduce<MinOp>(g_idata, g_odata, n, op, DBL_MAX);
+}
+
+/**
+ * Do a min over all rows of a matrix
+ * @param g_idata   input matrix stored in device memory (of size rows * cols)
+ * @param g_odata   output vector stored in device memory (of size rows)
+ * @param rows      number of rows in input matrix
+ * @param cols      number of columns in input matrix
+ */
+extern "C"
+__global__ void reduce_row_min(double *g_idata, double *g_odata, unsigned int rows, unsigned int cols){
+    MinOp op;
+    IdentityOp aop;
+    reduce_row<MinOp, IdentityOp>(g_idata, g_odata, rows, cols, op, aop, DBL_MAX);
+}
+
+/**
+ * Do a min over all columns of a matrix
+ * @param g_idata   input matrix stored in device memory (of size rows * cols)
+ * @param g_odata   output vector stored in device memory (of size cols)
+ * @param rows      number of rows in input matrix
+ * @param cols      number of columns in input matrix
+ */
+extern "C"
+__global__ void reduce_col_min(double *g_idata, double *g_odata, unsigned int rows, unsigned int cols){
+    MinOp op;
+    IdentityOp aop;
+    reduce_col<MinOp>(g_idata, g_odata, rows, cols, op, aop, DBL_MAX);
+}
+
+/**
+ * Functor op for product operation
+ */
+typedef struct {
+    __device__ __forceinline__
+    double operator()(double a, double b) const {
+        return a * b;
+    }
+} ProductOp;
+
+/**
+ * Do a product over all elements of an array/matrix
+ * @param g_idata   input data stored in device memory (of size n)
+ * @param g_odata   output/temporary array stode in device memory (of size n)
+ * @param n         size of the input and temporary/output arrays
+ */
+extern "C"
+__global__ void reduce_prod(double *g_idata, double *g_odata, unsigned int n){
+	ProductOp op;
+    reduce<ProductOp>(g_idata, g_odata, n, op, 1.0);
+}
+
+/**
+ * Functor op for mean operation
+ */
+struct MeanOp {
+    const long _size;   ///< Number of elements by which to divide to calculate mean
+		__device__ __forceinline__
+    MeanOp(long size): _size(size) {}
+    __device__ __forceinline__
+    double operator()(double total) const {
+        return total / _size;
+    }
+};
+
+
+/**
+ * Do a mean over all rows of a matrix
+ * @param g_idata   input matrix stored in device memory (of size rows * cols)
+ * @param g_odata   output vector stored in device memory (of size rows)
+ * @param rows      number of rows in input matrix
+ * @param cols      number of columns in input matrix
+ */
+extern "C"
+__global__ void reduce_row_mean(double *g_idata, double *g_odata, unsigned int rows, unsigned int cols){
+    SumOp op;
+    MeanOp aop(cols);
+    reduce_row<SumOp, MeanOp>(g_idata, g_odata, rows, cols, op, aop, 0.0);
+}
+
+/**
+ * Do a mean over all columns of a matrix
+ * @param g_idata   input matrix stored in device memory (of size rows * cols)
+ * @param g_odata   output vector stored in device memory (of size cols)
+ * @param rows      number of rows in input matrix
+ * @param cols      number of columns in input matrix
+ */
+extern "C"
+__global__ void reduce_col_mean(double *g_idata, double *g_odata, unsigned int rows, unsigned int cols){
+    SumOp op;
+    MeanOp aop(rows);
+    reduce_col<SumOp, MeanOp>(g_idata, g_odata, rows, cols, op, aop, 0.0);
 }

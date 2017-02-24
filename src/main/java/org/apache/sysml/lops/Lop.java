@@ -59,6 +59,8 @@ public abstract class Lop
 		SortKeys, PickValues,
 		Checkpoint, 										//Spark persist into storage level
 		PlusMult, MinusMult,								//CP
+		/** CP operation on a variable number of operands */
+		MULTIPLE_CP
 	};
 
 	/**
@@ -353,7 +355,7 @@ public abstract class Lop
 	}
  
 	/**
-	 * Method to get the execution type (CP or MR) of LOP
+	 * Method to get the execution type (CP, CP_FILE, MR, SPARK, GPU, INVALID) of LOP
 	 * 
 	 * @return execution type
 	 */
@@ -645,8 +647,14 @@ public abstract class Lop
 		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
 	}
 	
-	// For pooling backward
 	public String getInstructions(String input, String dout, String stride1, String stride2, String padding1, String padding2, 
+			String input_shape1, String input_shape2, String input_shape3, String input_shape4,
+			String filter_shape1, String filter_shape2, String filter_shape3, String filter_shape4,
+			String output) throws LopsException {
+		throw new LopsException(this.printErrorLocation() + "Should never be invoked in Baseclass");
+	}
+	
+	public String getInstructions(String input, String bias, String dout, String stride1, String stride2, String padding1, String padding2, 
 			String input_shape1, String input_shape2, String input_shape3, String input_shape4,
 			String filter_shape1, String filter_shape2, String filter_shape3, String filter_shape4,
 			String output) throws LopsException {

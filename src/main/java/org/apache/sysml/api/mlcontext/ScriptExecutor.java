@@ -27,7 +27,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.jmlc.JMLCUtils;
 import org.apache.sysml.api.mlcontext.MLContext.ExplainLevel;
-import org.apache.sysml.api.monitoring.SparkMonitoringUtil;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.hops.HopsException;
@@ -108,7 +107,6 @@ import org.apache.sysml.utils.Statistics;
 public class ScriptExecutor {
 
 	protected DMLConfig config;
-	protected SparkMonitoringUtil sparkMonitoringUtil;
 	protected DMLProgram dmlProgram;
 	protected DMLTranslator dmlTranslator;
 	protected Program runtimeProgram;
@@ -119,6 +117,7 @@ public class ScriptExecutor {
 	protected boolean statistics = false;
 	protected ExplainLevel explainLevel;
 	protected int statisticsMaxHeavyHitters = 10;
+	protected boolean maintainSymbolTable = false;
 
 	/**
 	 * ScriptExecutor constructor.
@@ -137,32 +136,6 @@ public class ScriptExecutor {
 	public ScriptExecutor(DMLConfig config) {
 		this.config = config;
 		ConfigurationManager.setGlobalConfig(config);
-	}
-
-	/**
-	 * ScriptExecutor constructor, where a SparkMonitoringUtil object is passed
-	 * in.
-	 * 
-	 * @param sparkMonitoringUtil
-	 *            SparkMonitoringUtil object to monitor Spark
-	 */
-	public ScriptExecutor(SparkMonitoringUtil sparkMonitoringUtil) {
-		this();
-		this.sparkMonitoringUtil = sparkMonitoringUtil;
-	}
-
-	/**
-	 * ScriptExecutor constructor, where the configuration properties and a
-	 * SparkMonitoringUtil object are passed in.
-	 * 
-	 * @param config
-	 *            the configuration properties to use by the ScriptExecutor
-	 * @param sparkMonitoringUtil
-	 *            SparkMonitoringUtil object to monitor Spark
-	 */
-	public ScriptExecutor(DMLConfig config, SparkMonitoringUtil sparkMonitoringUtil) {
-		this.config = config;
-		this.sparkMonitoringUtil = sparkMonitoringUtil;
 	}
 
 	/**
@@ -275,6 +248,7 @@ public class ScriptExecutor {
 	 * primary methods:
 	 * 
 	 * <ol>
+	 * <li>{@link #setup(Script)}</li>
 	 * <li>{@link #parseScript()}</li>
 	 * <li>{@link #liveVariableAnalysis()}</li>
 	 * <li>{@link #validateScript()}</li>
@@ -298,14 +272,9 @@ public class ScriptExecutor {
 	 * @return the results as a MLResults object
 	 */
 	public MLResults execute(Script script) {
-		this.script = script;
-		checkScriptHasTypeAndString();
-		script.setScriptExecutor(this);
-		setScriptStringInSparkMonitor();
-		// Set global variable indicating the script type
-		DMLScript.SCRIPT_TYPE = script.getScriptType();
 
 		// main steps in script execution
+		setup(script);
 		parseScript();
 		liveVariableAnalysis();
 		validateScript();
@@ -321,7 +290,6 @@ public class ScriptExecutor {
 		cleanupRuntimeProgram();
 		createAndInitializeExecutionContext();
 		executeRuntimeProgram();
-		setExplainRuntimeProgramInSparkMonitor();
 		cleanupAfterExecution();
 
 		// add symbol table to MLResults
@@ -333,6 +301,22 @@ public class ScriptExecutor {
 		}
 
 		return mlResults;
+	}
+
+	/**
+	 * Sets the script in the ScriptExecutor, checks that the script has a type
+	 * and string, sets the ScriptExecutor in the script, sets the script string
+	 * in the Spark Monitor, and globally sets the script type.
+	 * 
+	 * @param script
+	 *            the DML or PYDML script to execute
+	 */
+	protected void setup(Script script) {
+		this.script = script;
+		checkScriptHasTypeAndString();
+		script.setScriptExecutor(this);
+		// Set global variable indicating the script type
+		DMLScript.SCRIPT_TYPE = script.getScriptType();
 	}
 
 	/**
@@ -360,12 +344,19 @@ public class ScriptExecutor {
 	}
 
 	/**
-	 * Remove rmvar instructions so as to maintain registered outputs after the
-	 * program terminates.
+	 * If {@code maintainSymbolTable} is true, delete all 'remove variable'
+	 * instructions so as to maintain the values in the symbol table, which are
+	 * useful when working interactively in an environment such as the Spark
+	 * Shell. Otherwise, only delete 'remove variable' instructions for
+	 * registered outputs.
 	 */
 	protected void cleanupRuntimeProgram() {
-		JMLCUtils.cleanupRuntimeProgram(runtimeProgram, (script.getOutputVariables() == null) ? new String[0] : script
-				.getOutputVariables().toArray(new String[0]));
+		if (maintainSymbolTable) {
+			MLContextUtil.deleteRemoveVariableInstructions(runtimeProgram);
+		} else {
+			JMLCUtils.cleanupRuntimeProgram(runtimeProgram, (script.getOutputVariables() == null) ? new String[0]
+					: script.getOutputVariables().toArray(new String[0]));
+		}
 	}
 
 	/**
@@ -379,15 +370,6 @@ public class ScriptExecutor {
 		} catch (DMLRuntimeException e) {
 			throw new MLContextException("Exception occurred while executing runtime program", e);
 		}
-	}
-
-	/**
-	 * Obtain the SparkMonitoringUtil object.
-	 * 
-	 * @return the SparkMonitoringUtil object, if available
-	 */
-	public SparkMonitoringUtil getSparkMonitoringUtil() {
-		return sparkMonitoringUtil;
 	}
 
 	/**
@@ -476,41 +458,6 @@ public class ScriptExecutor {
 	public void setConfig(DMLConfig config) {
 		this.config = config;
 		ConfigurationManager.setGlobalConfig(config);
-	}
-
-	/**
-	 * Set the explanation of the runtime program in the SparkMonitoringUtil if
-	 * it exists.
-	 */
-	protected void setExplainRuntimeProgramInSparkMonitor() {
-		if (sparkMonitoringUtil != null) {
-			try {
-				String explainOutput = Explain.explain(runtimeProgram);
-				sparkMonitoringUtil.setExplainOutput(explainOutput);
-			} catch (HopsException e) {
-				throw new MLContextException("Exception occurred while explaining runtime program", e);
-			}
-		}
-
-	}
-
-	/**
-	 * Set the script string in the SparkMonitoringUtil if it exists.
-	 */
-	protected void setScriptStringInSparkMonitor() {
-		if (sparkMonitoringUtil != null) {
-			sparkMonitoringUtil.setDMLString(script.getScriptString());
-		}
-	}
-
-	/**
-	 * Set the SparkMonitoringUtil object.
-	 * 
-	 * @param sparkMonitoringUtil
-	 *            The SparkMonitoringUtil object
-	 */
-	public void setSparkMonitoringUtil(SparkMonitoringUtil sparkMonitoringUtil) {
-		this.sparkMonitoringUtil = sparkMonitoringUtil;
 	}
 
 	/**
@@ -632,6 +579,29 @@ public class ScriptExecutor {
 
 	public void setStatisticsMaxHeavyHitters(int maxHeavyHitters) {
 		this.statisticsMaxHeavyHitters = maxHeavyHitters;
+	}
+
+	/**
+	 * Obtain whether or not all values should be maintained in the symbol table
+	 * after execution.
+	 * 
+	 * @return {@code true} if all values should be maintained in the symbol
+	 *         table, {@code false} otherwise
+	 */
+	public boolean isMaintainSymbolTable() {
+		return maintainSymbolTable;
+	}
+
+	/**
+	 * Set whether or not all values should be maintained in the symbol table
+	 * after execution.
+	 * 
+	 * @param maintainSymbolTable
+	 *            {@code true} if all values should be maintained in the symbol
+	 *            table, {@code false} otherwise
+	 */
+	public void setMaintainSymbolTable(boolean maintainSymbolTable) {
+		this.maintainSymbolTable = maintainSymbolTable;
 	}
 
 	/**

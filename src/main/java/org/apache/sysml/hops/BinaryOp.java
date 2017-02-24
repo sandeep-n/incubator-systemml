@@ -36,6 +36,7 @@ import org.apache.sysml.lops.CentralMoment;
 import org.apache.sysml.lops.CoVariance;
 import org.apache.sysml.lops.CombineBinary;
 import org.apache.sysml.lops.CombineUnary;
+import org.apache.sysml.lops.ConvolutionTransform;
 import org.apache.sysml.lops.Data;
 import org.apache.sysml.lops.DataPartition;
 import org.apache.sysml.lops.Group;
@@ -73,22 +74,24 @@ public class BinaryOp extends Hop
 	private boolean outer = false;
 	
 	public static AppendMethod FORCED_APPEND_METHOD = null;
+	
+	
 	public enum AppendMethod { 
-		CP_APPEND, //in-memory general case append // TODO investigate unused enum constant
+		CP_APPEND, //in-memory general case append (implicitly selected for CP)
 		MR_MAPPEND, //map-only append (rhs must be vector and fit in mapper mem)
 		MR_RAPPEND, //reduce-only append (output must have at most one column block)
 		MR_GAPPEND, //map-reduce general case append (map-extend, aggregate)
 		SP_GAlignedAppend // special case for general case in Spark where left.getCols() % left.getColsPerBlock() == 0
 	};
 	
-	private enum MMBinaryMethod{
-		CP_BINARY,
+	private enum MMBinaryMethod {
+		CP_BINARY, //(implicitly selected for CP) 
 		MR_BINARY_R, //both mm, mv 
 		MR_BINARY_M, //only mv (mr/spark)
 		MR_BINARY_OUTER_M,
 		MR_BINARY_OUTER_R, //only vv 
 		MR_BINARY_UAGG_CHAIN, //(mr/spark)
-	}
+	};
 	
 	private BinaryOp() {
 		//default constructor for clone
@@ -593,7 +596,23 @@ public class BinaryOp extends Hop
 					et = ExecType.GPU;
 				}
 				
-				Binary binary = new Binary(getInput().get(0).constructLops(), getInput().get(1).constructLops(), HopsOpOp2LopsB.get(op),
+				Lop binary = null;
+				
+				boolean isLeftXGt = (getInput().get(0) instanceof BinaryOp) && ((BinaryOp) getInput().get(0)).getOp() == OpOp2.GREATER;
+				Hop potentialZero = isLeftXGt ? ((BinaryOp) getInput().get(0)).getInput().get(1) : null;
+				
+				boolean isLeftXGt0 = isLeftXGt && potentialZero != null
+						&& potentialZero instanceof LiteralOp && ((LiteralOp) potentialZero).getDoubleValue() == 0;
+						
+				if(op == OpOp2.MULT && isLeftXGt0 && 
+					!getInput().get(0).isVector() && !getInput().get(1).isVector()
+					&& getInput().get(0).dimsKnown() && getInput().get(1).dimsKnown()) {
+					binary = new ConvolutionTransform(getInput().get(0).getInput().get(0).constructLops(), 
+									getInput().get(1).constructLops(),
+									ConvolutionTransform.OperationTypes.RELU_BACKWARD, getDataType(), getValueType(), et, -1);
+				}
+				else
+					binary = new Binary(getInput().get(0).constructLops(), getInput().get(1).constructLops(), HopsOpOp2LopsB.get(op),
 						getDataType(), getValueType(), et);
 				
 				setOutputDimensions(binary);

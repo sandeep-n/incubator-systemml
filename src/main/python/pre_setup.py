@@ -19,7 +19,8 @@
 #
 #-------------------------------------------------------------
 
-import os, shutil
+import os
+import shutil
 import fnmatch
 python_dir = 'systemml'
 java_dir='systemml-java'
@@ -29,6 +30,6 @@ if os.path.exists(java_dir_full_path):
 os.mkdir(java_dir_full_path)
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.getcwd())))
 for file in os.listdir(os.path.join(root_dir, 'target')):
-    if fnmatch.fnmatch(file, 'systemml-*-incubating-SNAPSHOT.jar'):
-        shutil.copyfile(os.path.join(root_dir, 'target', file), os.path.join(java_dir_full_path, file))
-shutil.copytree(os.path.join(root_dir, 'scripts'), os.path.join(java_dir_full_path, 'scripts'))
+    if fnmatch.fnmatch(file, 'systemml-*-incubating-SNAPSHOT.jar') or fnmatch.fnmatch(file, 'systemml-*-incubating.jar'):
+        shutil.copyfile(os.path.join(root_dir, 'target', file),
+                        os.path.join(java_dir_full_path, file))

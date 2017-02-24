@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.Random;
 
 import org.apache.commons.math3.distribution.PoissonDistribution;
@@ -244,7 +245,10 @@ public class RandSPInstruction extends UnarySPInstruction
 	        	maxValue = Double.valueOf(s[6]).doubleValue();
 	        }
 	        
-	        double sparsity = Double.parseDouble(s[7]);
+	        double sparsity = -1;
+	        if (!s[7].contains( Lop.VARIABLE_NAME_PLACEHOLDER)) {
+	        	sparsity = Double.valueOf(s[7]);
+	        }
 			
 	        long seed = DataGenOp.UNSPECIFIED_SEED;
 			if (!s[8].contains( Lop.VARIABLE_NAME_PLACEHOLDER)) {
@@ -626,7 +630,7 @@ public class RandSPInstruction extends UnarySPInstruction
 		}
 		
 		@Override
-		public Iterable<Double> call(SampleTask t)
+		public Iterator<Double> call(SampleTask t)
 				throws Exception {
 
 			long st = t.range_start;
@@ -660,7 +664,7 @@ public class RandSPInstruction extends UnarySPInstruction
 							retList.add((double) i);
 				}
 			}
-			return retList;
+			return retList.iterator();
 		}
 	}
 	

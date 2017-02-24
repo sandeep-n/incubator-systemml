@@ -43,9 +43,6 @@ import org.apache.sysml.lops.AppendM;
 import org.apache.sysml.lops.BinaryM;
 import org.apache.sysml.lops.CombineBinary;
 import org.apache.sysml.lops.Data;
-import org.apache.sysml.lops.PMMJ;
-import org.apache.sysml.lops.ParameterizedBuiltin;
-import org.apache.sysml.lops.SortKeys;
 import org.apache.sysml.lops.Data.OperationTypes;
 import org.apache.sysml.lops.FunctionCallCP;
 import org.apache.sysml.lops.Lop;
@@ -56,12 +53,15 @@ import org.apache.sysml.lops.LopsException;
 import org.apache.sysml.lops.MapMult;
 import org.apache.sysml.lops.OutputParameters;
 import org.apache.sysml.lops.OutputParameters.Format;
+import org.apache.sysml.lops.PMMJ;
+import org.apache.sysml.lops.ParameterizedBuiltin;
 import org.apache.sysml.lops.PickByCount;
+import org.apache.sysml.lops.SortKeys;
 import org.apache.sysml.lops.Unary;
 import org.apache.sysml.parser.DataExpression;
 import org.apache.sysml.parser.Expression;
-import org.apache.sysml.parser.ParameterizedBuiltinFunctionExpression;
 import org.apache.sysml.parser.Expression.DataType;
+import org.apache.sysml.parser.ParameterizedBuiltinFunctionExpression;
 import org.apache.sysml.parser.StatementBlock;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.parfor.ProgramConverter;
@@ -70,11 +70,11 @@ import org.apache.sysml.runtime.instructions.CPInstructionParser;
 import org.apache.sysml.runtime.instructions.Instruction;
 import org.apache.sysml.runtime.instructions.Instruction.INSTRUCTION_TYPE;
 import org.apache.sysml.runtime.instructions.InstructionParser;
+import org.apache.sysml.runtime.instructions.MRJobInstruction;
 import org.apache.sysml.runtime.instructions.SPInstructionParser;
 import org.apache.sysml.runtime.instructions.cp.CPInstruction;
-import org.apache.sysml.runtime.instructions.cp.VariableCPInstruction;
 import org.apache.sysml.runtime.instructions.cp.CPInstruction.CPINSTRUCTION_TYPE;
-import org.apache.sysml.runtime.instructions.MRJobInstruction;
+import org.apache.sysml.runtime.instructions.cp.VariableCPInstruction;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
@@ -1427,6 +1427,9 @@ public class Dag<N extends Lop>
 					
 					inst_string = node.getInstructions(inputs, outputs);
 				}
+				else if (node.getType() == Lop.Type.MULTIPLE_CP) { // ie, MultipleCP class
+					inst_string = node.getInstructions(node.getOutputParameters().getLabel());
+				}
 				else {
 					if ( node.getInputs().isEmpty() ) {
 						// currently, such a case exists only for Rand lop
@@ -1523,6 +1526,26 @@ public class Dag<N extends Lop>
 						 		node.getInputs().get(11).getOutputParameters().getLabel(),
 						 		node.getInputs().get(12).getOutputParameters().getLabel(),
 						 		node.getInputs().get(13).getOutputParameters().getLabel(),
+						 		node.getOutputParameters().getLabel());
+					}
+					else if (node.getInputs().size() == 15) {
+						 // Used for fused conv2d_bias_add
+						 inst_string = node.getInstructions(
+						 		node.getInputs().get(0).getOutputParameters().getLabel(),
+						 		node.getInputs().get(1).getOutputParameters().getLabel(),
+						 		node.getInputs().get(2).getOutputParameters().getLabel(),
+						 		node.getInputs().get(3).getOutputParameters().getLabel(),
+						 		node.getInputs().get(4).getOutputParameters().getLabel(),
+						 		node.getInputs().get(5).getOutputParameters().getLabel(),
+						 		node.getInputs().get(6).getOutputParameters().getLabel(),
+						 		node.getInputs().get(7).getOutputParameters().getLabel(),
+						 		node.getInputs().get(8).getOutputParameters().getLabel(),
+						 		node.getInputs().get(9).getOutputParameters().getLabel(),
+						 		node.getInputs().get(10).getOutputParameters().getLabel(),
+						 		node.getInputs().get(11).getOutputParameters().getLabel(),
+						 		node.getInputs().get(12).getOutputParameters().getLabel(),
+						 		node.getInputs().get(13).getOutputParameters().getLabel(),
+						 		node.getInputs().get(14).getOutputParameters().getLabel(),
 						 		node.getOutputParameters().getLabel());
 					}
 					else {
