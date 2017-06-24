@@ -19,21 +19,20 @@
 
 package org.apache.sysml.hops;
 
-import java.util.ArrayList;
-
-import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.hops.Hop.MultiThreadedHop;
 import org.apache.sysml.lops.ConvolutionTransform;
 import org.apache.sysml.lops.ConvolutionTransform.OperationTypes;
 import org.apache.sysml.lops.Lop;
-import org.apache.sysml.lops.LopsException;
 import org.apache.sysml.lops.LopProperties.ExecType;
+import org.apache.sysml.lops.LopsException;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.ConvolutionParameters;
+
+import java.util.ArrayList;
 
 public class ConvolutionOp extends Hop  implements MultiThreadedHop
 {	
@@ -60,6 +59,11 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 		refreshSizeInformation();
 	}
 
+	@Override
+	public void checkArity() throws HopsException {
+		HopsException.check(_input.size() >= 1, this, "should have at least one input but has %d inputs", _input.size());
+	}
+
 	public ConvOp getOp()
 	{
 		return op;
@@ -70,6 +74,11 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 		return "" + HopsConv2Lops.get(op);
 	}
 
+	private boolean isEligibleForSpark() {
+		// return (op == ConvOp.DIRECT_CONV2D || op == ConvOp.MAX_POOLING) ? true : false;
+		return false;
+	}
+	
 	@Override
 	public Lop constructLops()
 		throws HopsException, LopsException 
@@ -89,20 +98,13 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 			case DIRECT_CONV2D_BACKWARD_DATA:
 			case DIRECT_CONV2D_BACKWARD_FILTER:
 			case BIAS_ADD:
+			case BIAS_MULTIPLY:
 			{	
-				//TODO: Fix me. Currently forcing the instruction to GPU if gpu flag is set
-				if(DMLScript.USE_ACCELERATOR) {
-					et = ExecType.GPU;
+				if(et == ExecType.CP || et == ExecType.GPU) {
 					setLops(constructConvolutionLops(et, inputs));
 					break;
 				}
-				else if(et == ExecType.CP) {
-					setLops(constructConvolutionLops(et, inputs));
-					break;
-				}			
 				else {
-					// TODO: Add support for SPARK/MR backends once we are happy with the performance of
-					// single node Lenet script. 
 					throw new HopsException("Unimplemented ConvolutionOp for execution type: " + et.name());
 				}
 				// break;
@@ -120,34 +122,51 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 	public void setOp(ConvOp op) {
 		this.op = op;
 	}
-
+	
+	private int getNumExpectedInputs() {
+		switch(op) {
+			case MAX_POOLING_BACKWARD: 
+			case DIRECT_CONV2D:
+			case DIRECT_CONV2D_BACKWARD_FILTER:
+			case DIRECT_CONV2D_BACKWARD_DATA:
+				return 14;
+			case BIAS_ADD:
+			case BIAS_MULTIPLY:
+				return 2;
+			default:
+				return 13;
+		}
+	}
+	
+	private boolean isInputReLU(Hop input) {
+		return input instanceof UnaryOp && ((UnaryOp) input).getOp() == OpOp1.SELP;
+	}
+	
+	private boolean isInputConv2d(Hop input) {
+		return input instanceof ConvolutionOp && ((ConvolutionOp) input).getOp() == ConvOp.DIRECT_CONV2D;
+	}
+	
 	public Lop constructConvolutionLops(ExecType et, ArrayList<Hop> inputs) throws HopsException, LopsException {
-		int expectedNumInputs = 13;
-		if(op == ConvOp.MAX_POOLING_BACKWARD 
-				|| op == ConvOp.DIRECT_CONV2D 
-				|| op == ConvOp.DIRECT_CONV2D_BACKWARD_FILTER
-				|| op == ConvOp.DIRECT_CONV2D_BACKWARD_DATA) {
-			expectedNumInputs = 14;
-		}
-		else if(op == ConvOp.BIAS_ADD) {
-			expectedNumInputs = 2;
-		}
-		
-		if(inputs.size() != expectedNumInputs) {
+		if(inputs.size() != getNumExpectedInputs()) 
 			throw new HopsException("Incorrect number of inputs for " + op.name());
-		}
 		
 		Lop in = null; Lop in2 = null;
-		OperationTypes lopOp = HopsConv2Lops.get(op);
-		int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
 		ArrayList<Hop> inputs1 = inputs;
-		if(op == ConvOp.MAX_POOLING && et == ExecType.CP && inputs.get(0) instanceof UnaryOp
-				&& ((UnaryOp) inputs.get(0)).getOp() == OpOp1.SELP) {
+		int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
+		OperationTypes lopOp = HopsConv2Lops.get(op);
+
+		// RELU_MAX_POOLING and RELU_MAX_POOLING_BACKWARD is extremely useful for CP backend 
+		// by reducing unnecessary sparse-to-dense-to-sparse conversion.
+		// For other backends, this operators is not necessary as it reduces an additional relu operator.
+		if(OptimizerUtils.ALLOW_OPERATOR_FUSION && et == ExecType.CP && op == ConvOp.MAX_POOLING && isInputReLU(inputs.get(0))) {
 			in = inputs.get(0).getInput().get(0).constructLops();
 			lopOp = OperationTypes.RELU_MAX_POOLING;
 		}
-		else if(op == ConvOp.BIAS_ADD && et == ExecType.CP && inputs.get(0) instanceof ConvolutionOp
-				&& ((ConvolutionOp) inputs.get(0)).getOp() == ConvOp.DIRECT_CONV2D) {
+		else if(OptimizerUtils.ALLOW_OPERATOR_FUSION && et == ExecType.CP && op == ConvOp.MAX_POOLING_BACKWARD && isInputReLU(inputs.get(0))) {
+			in = inputs.get(0).getInput().get(0).constructLops();
+			lopOp = OperationTypes.RELU_MAX_POOLING_BACKWARD;
+		}
+		else if(OptimizerUtils.ALLOW_OPERATOR_FUSION && op == ConvOp.BIAS_ADD && isInputConv2d(inputs.get(0))) {
 			lopOp = OperationTypes.DIRECT_CONV2D_BIAS_ADD;
 			
 			// the first lop is image 
@@ -161,8 +180,13 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 		else {
 			in = inputs.get(0).constructLops();
 		}
-		ConvolutionTransform transform1 = new ConvolutionTransform( in, lopOp, getDataType(), getValueType(), et, k);
+		
+//		// TODO: Inserting reblock requires knowing columns apriori
+//		ConvolutionTransform transform1 = new ConvolutionTransform(addReblockIfNecessary(et, lopOp, in), lopOp, getDataType(), getValueType(), et, k);
+//		setReblockedOutputDimension(et, transform1);
+		ConvolutionTransform transform1 = new ConvolutionTransform(in, lopOp, getDataType(), getValueType(), et, k);
 		setOutputDimensions(transform1);
+		
 		setLineNumbers(transform1);
 		in.addOutput(transform1);
 		
@@ -203,15 +227,14 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 	protected long[] inferOutputCharacteristics( MemoTable memo )
 	{
 		// [numRows, numCols, NNZ] 
-		long[] ret = null;
+		long[] ret = new long[3];
 		
-		if(op == ConvOp.BIAS_ADD) {
+		if(op == ConvOp.BIAS_ADD || op == ConvOp.BIAS_MULTIPLY) {
 			MatrixCharacteristics[] mc = memo.getAllInputStats(getInput());
-			ret = new long[3];
 			ret[0] = mc[0].rowsKnown() ? mc[0].getRows() : -1;
 			ret[1] = mc[0].colsKnown() ? mc[0].getCols() : -1;
 			ret[2] = -1;
-			return ret;
+			return (ret[0]>0 && ret[1]>0) ? ret : null;
 		}
 	
 		ConvolutionParameters params;
@@ -223,43 +246,41 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 		
 		switch(op) 
 		{
-			case MAX_POOLING:
-			{
-				ret = new long[3];
-				ret[0] = getInput().get(0)._dim1;
+			case MAX_POOLING: {
+				// input
+				long N = getInput().get(0)._dim1;
+				ret[0] = N;
 				ret[1] = getExtractedVal(params.C, params.P, params.Q);
 				ret[2] = -1;
 				break;
 			}
-			case MAX_POOLING_BACKWARD:
-			{
-				ret = new long[3];
+			case DIRECT_CONV2D: {
+				// input, filter
+				long N = getInput().get(0)._dim1;
+				ret[0] = N;
+				ret[1] = getExtractedVal(params.K, params.P, params.Q);
+				ret[2] = -1;
+				break;
+			}
+			case DIRECT_CONV2D_BACKWARD_FILTER: {
+				// input, dout	
+				ret[0] = params.K;
+				ret[1] = getExtractedVal(params.C, params.R, params.S);
+				ret[2] = -1;
+				break;
+			}
+			case MAX_POOLING_BACKWARD: {
+				// input, dout
 				ret[0] = getInput().get(0)._dim1;
 				ret[1] = getInput().get(0)._dim2;
 				ret[2] = -1;
 				break;
 			}
-			case DIRECT_CONV2D:
-			{
-				ret = new long[3];
-				ret[0] = getInput().get(0)._dim1;
-				ret[1] = getExtractedVal(getInput().get(1)._dim1, params.P, params.Q);
-				ret[2] = -1;
-				break;
-			}
-			case DIRECT_CONV2D_BACKWARD_FILTER:
-			{
-				ret = new long[3];
-				ret[0] = getInput().get(1)._dim1;
-				ret[1] = getInput().get(1)._dim2;
-				ret[2] = -1;
-				break;
-			}
-			case DIRECT_CONV2D_BACKWARD_DATA:
-			{
-				ret = new long[3];
-				ret[0] = getInput().get(0)._dim1;
-				ret[1] = getInput().get(0)._dim2;
+			case DIRECT_CONV2D_BACKWARD_DATA: {
+				// filter, dout
+				long N = getInput().get(1)._dim1;
+				ret[0] = N;
+				ret[1] = getExtractedVal(params.C, params.H, params.W);
 				ret[2] = -1;
 				break;
 			}
@@ -275,7 +296,8 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 					" pad=[" + params.pad_h + " " + params.pad_w + "]");
 		}
 		
-		return ret;
+		//safe return (create entry only if at least dims known)
+		return (ret[0]>0 && ret[1]>0) ? ret : null;
 	}
 	
 
@@ -290,25 +312,18 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 		
 		checkAndSetForcedPlatform();
 		
-		//TODO: Remove this once memEstimate is fixed for these instructions 
-		if((op == ConvOp.MAX_POOLING || op == ConvOp.MAX_POOLING_BACKWARD) && DMLScript.USE_ACCELERATOR) {
-			return ExecType.GPU;
-		}
-	
 		ExecType REMOTE = OptimizerUtils.isSparkExecutionMode() ? ExecType.SPARK : ExecType.MR;
 		
 		if( _etypeForced != null ) 			
 		{
-			_etype = _etypeForced;
+			_etype = findGPUExecTypeByMemEstimate(_etypeForced);
 		}
 		else 
 		{	
-			// TODO: After adding Spark backend, uncomment this
 			if ( OptimizerUtils.isMemoryBasedOptLevel() ) {
-				_etype = findExecTypeByMemEstimate();
+				_etype = findGPUExecTypeByMemEstimate(findExecTypeByMemEstimate());
 			}
-			else 
-			{
+			else {
 				_etype = REMOTE;
 			}
 			
@@ -316,12 +331,13 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 			checkAndSetInvalidCPDimsAndSize();
 		}
 		
+		// TODO: Fix this after adding remaining spark instructions
+		_etype = !isEligibleForSpark() && _etype == REMOTE ?  ExecType.CP : _etype;
+		
 		//mark for recompile (forever)
 		if( ConfigurationManager.isDynamicRecompilation() && !dimsKnown(true) && _etype==REMOTE )
 			setRequiresRecompile();
 		
-		_etype = ExecType.CP;
-	
 		return _etype;
 	}
 	
@@ -374,7 +390,7 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 	@Override
 	public void refreshSizeInformation()
 	{
-		if(op == ConvOp.BIAS_ADD) {
+		if(op == ConvOp.BIAS_ADD || op == ConvOp.BIAS_MULTIPLY) {
 			Hop input1 = getInput().get(0);
 			setDim1(input1.getDim1());
 			setDim2(input1.getDim2());
@@ -392,13 +408,16 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 		{
 			case MAX_POOLING:
 			{	
-				_dim1 = getInput().get(0)._dim1;
+				// input
+				long N = getInput().get(0)._dim1;
+				_dim1 = N;
 				_dim2 = getExtractedVal(params.C, params.P, params.Q);
 				_nnz = -1; // cannot infer stats
 				break;
 			}
 			case MAX_POOLING_BACKWARD:
 			{
+				// input, dout
 				_dim1 = getInput().get(0)._dim1;
 				_dim2 = getInput().get(0)._dim2;
 				_nnz = -1;
@@ -406,22 +425,27 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 			}
 			case DIRECT_CONV2D:
 			{
-				_dim1 = getInput().get(0)._dim1;
-				_dim2 = getExtractedVal(getInput().get(1)._dim1, params.P, params.Q);
+				// input, filter
+				long N = getInput().get(0)._dim1;
+				_dim1 = N;
+				_dim2 = getExtractedVal(params.K, params.P, params.Q);
 				_nnz = -1; // cannot infer stats
 				break;
 			}
 			case DIRECT_CONV2D_BACKWARD_DATA:
 			{
-				_dim1 = getInput().get(0)._dim1;
-				_dim2 = getInput().get(0)._dim2;
+				// filter, dout
+				long N = getInput().get(1)._dim1;
+				_dim1 = N;
+				_dim2 = getExtractedVal(params.C, params.H, params.W);
 				_nnz = -1; // cannot infer stats
 				break;
 			}
 			case DIRECT_CONV2D_BACKWARD_FILTER:
 			{
-				_dim1 = getInput().get(1)._dim1;
-				_dim2 = getInput().get(1)._dim2;
+				// input, dout	
+				_dim1 = params.K;
+				_dim2 = getExtractedVal(params.C, params.R, params.S);
 				_nnz = -1; // cannot infer stats
 				break;
 			}
@@ -470,22 +494,6 @@ public class ConvolutionOp extends Hop  implements MultiThreadedHop
 				ret &= getInput().get(i) == that2.getInput().get(i);
 		
 		return ret;
-	}
-	
-	
-	@Override
-	public void printMe() throws HopsException 
-	{
-		if (LOG.isDebugEnabled()){
-			if (getVisited() != VisitStatus.DONE) {
-				super.printMe();
-				LOG.debug("  Operation: " + op);
-				for (Hop h : getInput()) {
-					h.printMe();
-				}
-			}
-			setVisited(VisitStatus.DONE);
-		}
 	}
 
 	@Override

@@ -23,21 +23,17 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 
-import org.junit.Assert;
-import org.junit.Test;
-import org.apache.sysml.api.DMLException;
 import org.apache.sysml.api.jmlc.Connection;
 import org.apache.sysml.api.jmlc.PreparedScript;
 import org.apache.sysml.api.jmlc.ResultVariables;
 import org.apache.sysml.runtime.controlprogram.parfor.stat.Timing;
+import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.test.integration.AutomatedTestBase;
 import org.apache.sysml.test.integration.TestConfiguration;
 import org.apache.sysml.test.utils.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
 
-/**
- * 
- * 
- */
 public class FrameCastingTest extends AutomatedTestBase 
 {
 	private final static String TEST_NAME1 = "transform6";
@@ -78,13 +74,6 @@ public class FrameCastingTest extends AutomatedTestBase
 		runJMLCReuseTest(TEST_NAME1, true, true);
 	}
 
-	/**
-	 * 
-	 * @param sparseM1
-	 * @param sparseM2
-	 * @param instType
-	 * @throws IOException 
-	 */
 	private void runJMLCReuseTest( String testname, boolean sparse, boolean modelReuse ) 
 		throws IOException
 	{	
@@ -108,13 +97,6 @@ public class FrameCastingTest extends AutomatedTestBase
 					Assert.assertEquals("Wrong result: "+data[i][j]+".", new Double(data[i][j]), new Double(cF1[i][j]));
 	}
 
-	/**
-	 * 
-	 * @param X
-	 * @return
-	 * @throws DMLException
-	 * @throws IOException
-	 */
 	private ArrayList<String[][]> execDMLScriptviaJMLC( String testname, String[][] F1, boolean modelReuse) 
 		throws IOException
 	{
@@ -158,23 +140,15 @@ public class FrameCastingTest extends AutomatedTestBase
 			ex.printStackTrace();
 			throw new IOException(ex);
 		}
-		finally
-		{
-			if( conn != null )
-				conn.close();
+		finally {
+			IOUtilFunctions.closeSilently(conn);
 		}
 		
 		System.out.println("JMLC scoring w/ "+nRuns+" runs in "+time.stop()+"ms.");
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param data
-	 * @param val
-	 * @return
-	 */
+
 	private double[][] add(double[][] data, double val) {
 		for( int i=0; i<data.length; i++ )
 			for( int j=0; j<data[i].length; j++ )

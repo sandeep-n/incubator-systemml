@@ -50,6 +50,7 @@ import org.apache.sysml.runtime.instructions.spark.CastSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CentralMomentSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CheckpointSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CompressionSPInstruction;
+import org.apache.sysml.runtime.instructions.spark.ConvolutionSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CovarianceSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CpmmSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.CumulativeAggregateSPInstruction;
@@ -72,6 +73,7 @@ import org.apache.sysml.runtime.instructions.spark.ReorgSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.RmmSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.SPInstruction;
 import org.apache.sysml.runtime.instructions.spark.SPInstruction.SPINSTRUCTION_TYPE;
+import org.apache.sysml.runtime.instructions.spark.SpoofSPInstruction;
 import org.apache.sysml.runtime.instructions.spark.TernarySPInstruction;
 import org.apache.sysml.runtime.instructions.spark.Tsmm2SPInstruction;
 import org.apache.sysml.runtime.instructions.spark.TsmmSPInstruction;
@@ -132,6 +134,12 @@ public class SPInstructionParser extends InstructionParser
 		//ternary aggregate operators
 		String2SPInstructionType.put( "tak+*"      , SPINSTRUCTION_TYPE.AggregateTernary);
 		String2SPInstructionType.put( "tack+*"     , SPINSTRUCTION_TYPE.AggregateTernary);
+
+		// Neural network operators
+		String2SPInstructionType.put( "conv2d",                 SPINSTRUCTION_TYPE.Convolution);
+		String2SPInstructionType.put( "conv2d_bias_add", SPINSTRUCTION_TYPE.Convolution);
+		String2SPInstructionType.put( "maxpooling",             SPINSTRUCTION_TYPE.Convolution);
+		String2SPInstructionType.put( "relu_maxpooling",          SPINSTRUCTION_TYPE.Convolution);
 		
 		String2SPInstructionType.put( "rangeReIndex"   	, SPINSTRUCTION_TYPE.MatrixIndexing);
 		String2SPInstructionType.put( "leftIndex"   	, SPINSTRUCTION_TYPE.MatrixIndexing);
@@ -222,7 +230,6 @@ public class SPInstructionParser extends InstructionParser
 		String2SPInstructionType.put( "rmempty"	     , SPINSTRUCTION_TYPE.ParameterizedBuiltin);
 		String2SPInstructionType.put( "replace"	     , SPINSTRUCTION_TYPE.ParameterizedBuiltin);
 		String2SPInstructionType.put( "rexpand"	     , SPINSTRUCTION_TYPE.ParameterizedBuiltin);
-		String2SPInstructionType.put( "transform"    , SPINSTRUCTION_TYPE.ParameterizedBuiltin);
 		String2SPInstructionType.put( "transformapply",SPINSTRUCTION_TYPE.ParameterizedBuiltin);
 		String2SPInstructionType.put( "transformdecode",SPINSTRUCTION_TYPE.ParameterizedBuiltin);
 		String2SPInstructionType.put( "transformencode",SPINSTRUCTION_TYPE.MultiReturnBuiltin);
@@ -270,10 +277,12 @@ public class SPInstructionParser extends InstructionParser
 		
 		String2SPInstructionType.put( "binuaggchain", SPINSTRUCTION_TYPE.BinUaggChain);
 		
-		String2SPInstructionType.put( "write"   , SPINSTRUCTION_TYPE.Write);
+		String2SPInstructionType.put( "write"	, SPINSTRUCTION_TYPE.Write);
 	
-		String2SPInstructionType.put( "castdtm"   , SPINSTRUCTION_TYPE.Cast);
-		String2SPInstructionType.put( "castdtf"   , SPINSTRUCTION_TYPE.Cast);
+		String2SPInstructionType.put( "castdtm" , SPINSTRUCTION_TYPE.Cast);
+		String2SPInstructionType.put( "castdtf"	, SPINSTRUCTION_TYPE.Cast);
+		
+		String2SPInstructionType.put( "spoof"	, SPINSTRUCTION_TYPE.SpoofFused);
 	}
 
 	public static SPInstruction parseSingleInstruction (String str ) 
@@ -331,6 +340,9 @@ public class SPInstructionParser extends InstructionParser
 			case AggregateTernary:
 				return AggregateTernarySPInstruction.parseInstruction(str);
 				
+			case Convolution:
+				 return ConvolutionSPInstruction.parseInstruction(str);
+
 			case MatrixIndexing:
 				return IndexingSPInstruction.parseInstruction(str);
 				
@@ -433,10 +445,13 @@ public class SPInstructionParser extends InstructionParser
 				
 			case Checkpoint:
 				return CheckpointSPInstruction.parseInstruction(str);
-			
+
 			case Compression:
 				return CompressionSPInstruction.parseInstruction(str);
 			
+			case SpoofFused:
+				return SpoofSPInstruction.parseInstruction(str);
+				
 			case Cast:
 				return CastSPInstruction.parseInstruction(str);
 				

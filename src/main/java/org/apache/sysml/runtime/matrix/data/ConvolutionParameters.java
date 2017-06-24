@@ -19,6 +19,8 @@
 
 package org.apache.sysml.runtime.matrix.data;
 
+import java.io.Serializable;
+
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.util.ConvolutionUtils;
 
@@ -26,13 +28,14 @@ import org.apache.sysml.runtime.util.ConvolutionUtils;
  * This class is container that stores parameters required for executing following operations:
  * conv2d, conv2d_backward_data, conv2d_backward_filter, maxpooling, maxpooling_backward 
  */
-public class ConvolutionParameters {
+public class ConvolutionParameters implements Serializable {
+	private static final long serialVersionUID = -212362627205772829L;
 	public int N; public int C; public int H; public int W;
 	public int K; public int R; public int S; public int stride_h; public int stride_w; public int pad_h; public int pad_w;
 	public int P; public int Q; public int numThreads;
 	
-	
-	MatrixBlock input1; MatrixBlock input2; MatrixBlock output;
+	public boolean enableNative = false;
+	public MatrixBlock input1; public MatrixBlock input2; public MatrixBlock output;
 	
 	public MatrixBlock bias;
 	public int [] start_indexes_h, end_indexes_h, start_indexes_w, end_indexes_w; 
@@ -55,7 +58,8 @@ public class ConvolutionParameters {
 	}
 	
 	public String toString() {
-		return "(" + N + " " + C + " " + H + " " + W + " " + K + " " + R + " " + S + ")";  
+		return "(NCHW=[" + N + " " + C + " " + H + " " + W + "], KCRS=[" + K + " " + R + " " + S + "], stride=[" + stride_h + "," + stride_w  + 
+				"], pad=[" + pad_h + "," + pad_w + "])";  
 	}
 	
 	public ConvolutionParameters(long N, long C, long H, long W,

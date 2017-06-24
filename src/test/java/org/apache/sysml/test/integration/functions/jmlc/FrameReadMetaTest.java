@@ -42,10 +42,6 @@ import org.apache.sysml.runtime.util.MapReduceTool;
 import org.apache.sysml.test.integration.AutomatedTestBase;
 import org.apache.sysml.test.integration.TestConfiguration;
 
-/**
- * 
- * 
- */
 public class FrameReadMetaTest extends AutomatedTestBase 
 {
 	private final static String TEST_NAME1 = "transform3";
@@ -90,13 +86,6 @@ public class FrameReadMetaTest extends AutomatedTestBase
 		runJMLCReadMetaTest(TEST_NAME1, true, true, false);
 	}
 
-	/**
-	 * 
-	 * @param sparseM1
-	 * @param sparseM2
-	 * @param instType
-	 * @throws IOException 
-	 */
 	private void runJMLCReadMetaTest( String testname, boolean modelReuse, boolean readFrame, boolean useSpec ) 
 		throws IOException
 	{	
@@ -162,19 +151,11 @@ public class FrameReadMetaTest extends AutomatedTestBase
 			ex.printStackTrace();
 			throw new IOException(ex);
 		}
-		finally
-		{
-			if( conn != null )
-				conn.close();
+		finally {
+			IOUtilFunctions.closeSilently(conn);
 		}
 	}
 
-	/**
-	 * 
-	 * @param M
-	 * @return
-	 * @throws DMLRuntimeException 
-	 */
 	@SuppressWarnings("unchecked")
 	private HashMap<String,Long>[] getRecodeMaps(String spec, FrameBlock M) 
 		throws DMLRuntimeException 
@@ -197,14 +178,7 @@ public class FrameReadMetaTest extends AutomatedTestBase
 		
 		return ret;
 	}
-	
-	/**
-	 * 
-	 * @param rows
-	 * @param cols
-	 * @param RC
-	 * @return
-	 */
+
 	private double[][] generateData(int rows, int cols, HashMap<String,Long>[] RC) {
 		double[][] ret = new double[rows][cols];
 		for( int i=0; i<rows; i++ ) 

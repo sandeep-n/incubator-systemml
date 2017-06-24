@@ -35,13 +35,14 @@ import org.apache.sysml.lops.LopProperties.ExecType;
 import org.apache.sysml.lops.Transform.OperationTypes;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 
 /**
  *  Reorg (cell) operation: aij
  * 		Properties: 
  * 			Symbol: ', rdiag, rshape, rsort
- * 			1 Operand
+ * 			1 Operand (except sort and reshape take additional arguments)
  * 	
  * 		Semantic: change indices (in mapper or reducer)
  * 
@@ -91,6 +92,24 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 	}
 
 	@Override
+	public void checkArity() throws HopsException {
+		int sz = _input.size();
+		switch( op ) {
+		case TRANSPOSE:
+		case DIAG:
+		case REV:
+			HopsException.check(sz == 1, this, "should have arity 1 for op %s but has arity %d", op, sz);
+			break;
+		case RESHAPE:
+		case SORT:
+			HopsException.check(sz == 4, this, "should have arity 4 for op %s but has arity %d", op, sz);
+			break;
+		default:
+			throw new HopsException("Unsupported lops construction for operation type '" + op + "'.");
+		}
+	}
+
+	@Override
 	public void setMaxNumThreads( int k ) {
 		_maxNumThreads = k;
 	}
@@ -133,7 +152,8 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 					setLops(lin); //if input of size 1x1, avoid unnecessary transpose
 				else { //general case
 					int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
-					if(DMLScript.USE_ACCELERATOR && (DMLScript.FORCE_ACCELERATOR || getMemEstimate() < OptimizerUtils.GPU_MEMORY_BUDGET)) {
+					if(DMLScript.USE_ACCELERATOR && (DMLScript.FORCE_ACCELERATOR || getMemEstimate() < GPUContextPool
+							.initialGPUMemBudget())) {
 						et = ExecType.GPU;
 					}
 					Transform transform1 = new Transform( lin, 
@@ -256,7 +276,7 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 						vinput = new IndexingOp("tmp1", getDataType(), getValueType(), input, new LiteralOp(1L), 
 								HopRewriteUtils.createValueHop(input, true), by, by, false, true);
 						vinput.refreshSizeInformation();
-						HopRewriteUtils.setOutputBlocksizes(vinput, getRowsInBlock(), getColsInBlock());
+						vinput.setOutputBlocksizes(getRowsInBlock(), getColsInBlock());
 						HopRewriteUtils.copyLineNumbers(this, vinput);	
 					}
 					
@@ -314,7 +334,7 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 						
 						//generate table
 						TernaryOp table = new TernaryOp("tmp5", DataType.MATRIX, ValueType.DOUBLE, OpOp3.CTABLE, seq, voutput, new LiteralOp(1L) );
-						HopRewriteUtils.setOutputBlocksizes(table, getRowsInBlock(), getColsInBlock());
+						table.setOutputBlocksizes(getRowsInBlock(), getColsInBlock());
 						table.refreshSizeInformation();
 						table.setForcedExecType(ExecType.MR); //force MR 
 						HopRewriteUtils.copyLineNumbers(this, table);
@@ -646,22 +666,6 @@ public class ReorgOp extends Hop implements MultiThreadedHop
 				ret &= getInput().get(i) == that2.getInput().get(i);
 		
 		return ret;
-	}
-	
-	
-	@Override
-	public void printMe() throws HopsException 
-	{
-		if (LOG.isDebugEnabled()){
-			if (getVisited() != VisitStatus.DONE) {
-				super.printMe();
-				LOG.debug("  Operation: " + op);
-				for (Hop h : getInput()) {
-					h.printMe();
-				}
-			}
-			setVisited(VisitStatus.DONE);
-		}
 	}
 
 	/**

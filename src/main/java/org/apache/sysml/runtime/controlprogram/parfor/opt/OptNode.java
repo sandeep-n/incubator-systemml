@@ -28,6 +28,7 @@ import java.util.Set;
 import org.apache.sysml.lops.Lop;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
+import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PartitionFormat;
 
 /**
  * Internal representation of a plan alternative for program blocks and instructions 
@@ -71,6 +72,8 @@ public class OptNode
 		TASK_SIZE,
 		DATA_PARTITIONER,
 		DATA_PARTITION_FORMAT,
+		DATA_PARTITION_COND,
+		DATA_PARTITION_COND_MEM,
 		RESULT_MERGE,
 		NUM_ITERATIONS,
 		RECURSIVE_CALL
@@ -455,7 +458,7 @@ public class OptNode
 			//partitioned read identified by selected partition format
 			String tmp = getParam(ParamType.DATA_PARTITION_FORMAT);
 			ret = ( tmp !=null 
-					&& PDataPartitionFormat.valueOf(tmp)!=PDataPartitionFormat.NONE 
+					&& PartitionFormat.valueOf(tmp)._dpf!=PDataPartitionFormat.NONE 
 					&& flagNested );
 		}
 		else

@@ -42,8 +42,7 @@ public class CostEstimatorHops extends CostEstimator
 	}
 	
 	
-	public CostEstimatorHops( OptTreePlanMappingAbstract map )
-	{
+	public CostEstimatorHops( OptTreePlanMappingAbstract map ) {
 		_map = map;
 	}
 
@@ -94,7 +93,7 @@ public class CostEstimatorHops extends CostEstimator
 		}
 		
 		//check for forced runtime platform
-		if( h.getForcedExecType()==ExecType.MR  || h.getExecType()==ExecType.SPARK) 
+		if( h.getForcedExecType()==ExecType.MR  || h.getForcedExecType()==ExecType.SPARK) 
 		{
 			value = DEFAULT_MEM_REMOTE;
 		}

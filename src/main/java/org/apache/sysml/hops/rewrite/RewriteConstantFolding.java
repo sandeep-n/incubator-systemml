@@ -29,7 +29,6 @@ import org.apache.sysml.hops.Hop;
 import org.apache.sysml.hops.Hop.DataOpTypes;
 import org.apache.sysml.hops.Hop.OpOp1;
 import org.apache.sysml.hops.Hop.OpOp2;
-import org.apache.sysml.hops.Hop.VisitStatus;
 import org.apache.sysml.hops.HopsException;
 import org.apache.sysml.hops.LiteralOp;
 import org.apache.sysml.hops.UnaryOp;
@@ -59,8 +58,8 @@ public class RewriteConstantFolding extends HopRewriteRule
 	private static final String TMP_VARNAME = "__cf_tmp";
 	
 	//reuse basic execution runtime
-	private static ProgramBlock     _tmpPB = null;
-	private static ExecutionContext _tmpEC = null;
+	private ProgramBlock     _tmpPB = null;
+	private ExecutionContext _tmpEC = null;
 	
 	
 	@Override
@@ -98,7 +97,7 @@ public class RewriteConstantFolding extends HopRewriteRule
 	private Hop rConstantFoldingExpression( Hop root ) 
 		throws HopsException
 	{
-		if( root.getVisited() == VisitStatus.DONE )
+		if( root.isVisited() )
 			return root;
 		
 		//recursively process childs (before replacement to allow bottom-recursion)
@@ -168,7 +167,7 @@ public class RewriteConstantFolding extends HopRewriteRule
 			
 		
 		//mark processed
-		root.setVisited( VisitStatus.DONE );
+		root.setVisited();
 		return root;
 	}
 	
@@ -226,17 +225,14 @@ public class RewriteConstantFolding extends HopRewriteRule
 		ec.getVariables().removeAll();
 		
 		//set literal properties (scalar)
- 		literal.setDim1(0);
-		literal.setDim2(0);
-		literal.setRowsInBlock(-1);
-		literal.setColsInBlock(-1);
-		
+		HopRewriteUtils.setOutputParametersForScalar(literal);
+ 		
 		//System.out.println("Constant folded in "+time.stop()+"ms.");
 		
 		return literal;
 	}
 	
-	private static ProgramBlock getProgramBlock() 
+	private ProgramBlock getProgramBlock() 
 		throws DMLRuntimeException
 	{
 		if( _tmpPB == null )
@@ -244,7 +240,7 @@ public class RewriteConstantFolding extends HopRewriteRule
 		return _tmpPB;
 	}
 	
-	private static ExecutionContext getExecutionContext()
+	private ExecutionContext getExecutionContext()
 	{
 		if( _tmpEC == null )
 			_tmpEC = ExecutionContextFactory.createContext();
@@ -278,8 +274,7 @@ public class RewriteConstantFolding extends HopRewriteRule
 		throws HopsException
 	{
 		ArrayList<Hop> in = hop.getInput();
-		return (   hop instanceof BinaryOp 
-				&& ((BinaryOp)hop).getOp()==OpOp2.AND
+		return (   HopRewriteUtils.isBinary(hop, OpOp2.AND)
 				&& ( (in.get(0) instanceof LiteralOp && !((LiteralOp)in.get(0)).getBooleanValue())   
 				   ||(in.get(1) instanceof LiteralOp && !((LiteralOp)in.get(1)).getBooleanValue())) );			
 	}
@@ -288,8 +283,7 @@ public class RewriteConstantFolding extends HopRewriteRule
 		throws HopsException
 	{
 		ArrayList<Hop> in = hop.getInput();
-		return (   hop instanceof BinaryOp 
-				&& ((BinaryOp)hop).getOp()==OpOp2.OR
+		return (   HopRewriteUtils.isBinary(hop, OpOp2.OR)
 				&& ( (in.get(0) instanceof LiteralOp && ((LiteralOp)in.get(0)).getBooleanValue())   
 				   ||(in.get(1) instanceof LiteralOp && ((LiteralOp)in.get(1)).getBooleanValue())) );			
 	}
